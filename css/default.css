@@ -1,18 +1,102 @@
-body {
-    color: black;
-    font-size: 16px;
-    margin: 0px auto 0px auto;
-    width: 600px;
+@import url(https://fonts.googleapis.com/css?family=Merriweather:300,300italic,700|Source+Code+Pro);
+
+body{
+    background:#fff;
+    color:#222;
+    cursor:auto;
+    font-family:"Merriweather","DejaVu Serif",serif;
+    font-style:normal;
+    font-weight:normal;
+    font-size: 12pt;
+    line-height:1.5;
+    padding:0;
+    position:relative;
+    padding: 70px 10% 50px 10%;
 }
 
+header {
+    background: #eef0fe;
+    border: 1px solid #90a0b9;
+    margin: 0 0 5em 0;
+    padding: 0 1em;
+}
+
+a {
+    color: #268BD2;
+}
+a:hover{
+    cursor:pointer;
+    color: #D28B26;
+}
+
+p {
+    margin: 1em 0;
+    text-align: justify;
+    text-justify: inter-word;
+}
+
+h1 {
+    font-weight: bold;
+    font-size: 18pt;
+    margin: 1em 0;
+}
+h2 {
+    font-weight: bold;
+    font-size: 16pt;
+    margin: 1em 0;
+}
+h3 {
+    font-weight: bold;
+    font-size: 14pt;
+    margin: 1em 0;
+}
+div.sourceCode, pre.shell {
+    background-color: #FFFAF3;
+    border-color:#cfc4ca;
+    border-style:solid;
+    border-width:1px;
+    padding: 0.3em;
+}
+
+.sourceCode .kw { color: #268BD2; }
+.sourceCode .dt { color: #268BD2; }
+
+.sourceCode .dv, .sourceCode .bn, .sourceCode .fl { color: #D33682; }
+.sourceCode .ch { color: #DC322F; }
+.sourceCode .st { color: #2AA198; }
+.sourceCode .co { color: #93A1A1; }
+.sourceCode .ot { color: #A57800; }
+.sourceCode .al { color: #CB4B16; font-weight: bold; }
+.sourceCode .fu { color: #268BD2; }
+.sourceCode .re { }
+.sourceCode .er { color: #D30102; font-weight: bold; }
+
+
+code{
+    font-family:"Source Code Pro",Consolas,"DejaVu Sans Mono",monospace;font-weight:normal;
+    line-height:1.6;
+}
+
+ul li:before {
+		content: "\25B8";
+    color: #268BD2;
+    margin: 0 0.5em 0 1em;
+}
+
+ul li {
+}
+
+
+
+
 div#header {
-    border-bottom: 2px solid black;
+    border-bottom: 1px solid #ccc;
     margin-bottom: 30px;
     padding: 12px 0px 12px 0px;
 }
 
 div#logo a {
-    color: black;
+    color: #36aB22;
     float: left;
     font-size: 18px;
     font-weight: bold;
@@ -33,7 +117,6 @@ div#header #navigation a {
 }
 
 div#footer {
-    border-top: solid 2px black;
     color: #555;
     font-size: 12px;
     margin-top: 30px;
@@ -41,16 +124,15 @@ div#footer {
     text-align: right;
 }
 
-h1 {
-    font-size: 24px;
-}
-
-h2 {
-    font-size: 20px;
-}
-
 div.info {
     color: #555;
     font-size: 14px;
     font-style: italic;
+}
+
+em {
+    font-style: italic;
+}
+strong {
+    font-weight: bold;
 }
