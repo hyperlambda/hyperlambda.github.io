@@ -618,7 +618,7 @@ Finally, let's start the HTTP listener:
 
 That's it! the application can be now executed, and we can use HTTP to run the defined commands and queries:
 
-````shell
+````bash
 $ curl -X POST http://localhost:3000/create/my-counter
 Applied.
 
