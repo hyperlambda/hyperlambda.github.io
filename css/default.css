@@ -56,6 +56,7 @@ div.sourceCode, pre.shell {
     border-style:solid;
     border-width:1px;
     padding: 0.3em;
+    overflow-x: auto;
 }
 
 .sourceCode .kw { color: #268BD2; }
