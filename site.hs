@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 import           Data.Monoid (mappend)
 import           Hakyll
+import           Text.Pandoc.Options
 
 
 --------------------------------------------------------------------------------
@@ -23,10 +24,16 @@ main = hakyll $ do
 
     match "posts/*" $ do
         route $ setExtension "html"
-        compile $ pandocCompiler
-            >>= loadAndApplyTemplate "templates/post.html"    postCtx
-            >>= loadAndApplyTemplate "templates/default.html" postCtx
-            >>= relativizeUrls
+        compile $ do
+                ident <- getUnderlying
+                toc <- getMetadataField ident "toc"
+                let writerSettings = case toc of
+                                        (Just "yes")  -> myWriterOptionsToc
+                                        Nothing     -> myWriterOptions
+                pandocCompilerWith myReaderOptions writerSettings
+                >>= loadAndApplyTemplate "templates/post.html"    postCtx
+                >>= loadAndApplyTemplate "templates/default.html" postCtx
+                >>= relativizeUrls
 
     create ["archive.html"] $ do
         route idRoute
@@ -64,3 +71,21 @@ postCtx :: Context String
 postCtx =
     dateField "date" "%B %e, %Y" `mappend`
     defaultContext
+
+myWriterOptions :: WriterOptions
+myWriterOptions = defaultHakyllWriterOptions {
+      writerReferenceLinks = True
+    , writerHtml5 = True
+    , writerHighlight = True
+    }
+
+myWriterOptionsToc :: WriterOptions
+myWriterOptionsToc = myWriterOptions {
+      writerTableOfContents = True
+    , writerTOCDepth = 2
+    , writerTemplate = "$if(toc)$<div id=\"toc\">$toc$</div>$endif$\n$body$"
+    , writerStandalone = True
+    }
+
+myReaderOptions :: ReaderOptions
+myReaderOptions = defaultHakyllReaderOptions

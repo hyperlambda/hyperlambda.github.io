@@ -1,6 +1,7 @@
 ---
 author: Sarunas Valaskevicius
 title: CQRS/ES in Haskell
+toc: yes
 ---
 
 
