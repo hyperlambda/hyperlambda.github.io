@@ -81,7 +81,7 @@ code{
 ul li:before {
 		content: "\25B8";
     color: #268BD2;
-    margin: 0 0.5em 0 0.5em;
+    margin: 0 0.5em 0 0;
 }
 
 ul li {
@@ -142,7 +142,7 @@ strong {
 div#toc {
     float: right;
     margin: 0  0 1em 1em;
-    padding: 0.5rem;
+    padding: 0.5rem 0.5rem 0.5rem 0;
     background-color: #fafaf0;
     border: 1px solid #eed;
 }
