@@ -146,3 +146,12 @@ div#toc {
     background-color: #fafaf0;
     border: 1px solid #eed;
 }
+
+#main-content-list li {
+    margin-top: 1em;
+}
+
+.teaser {
+    margin-left: 2em;
+    margin-top: 0;
+}

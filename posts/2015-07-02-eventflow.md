@@ -14,6 +14,8 @@ The main principle of CQRS is based on [CQS](http://martinfowler.com/bliki/Comma
 
 CQRS takes this principle a step up. It [describes](http://codebetter.com/gregyoung/2010/02/16/cqrs-task-based-uis-event-sourcing-agh/)  that the command methods should be segregated from the query methods. Instead of having one model for the data there are now two - the write model for commands, and the read model for queries. In effect, it is now possible maintain and optimise the write side separately from the read side.
 
+<!--more-->
+
 [Event Sourcing](http://martinfowler.com/eaaDev/EventSourcing.html) is an architectural style where the application is required to _persist all changes as new Event records_. Events are the primary source of truth when restoring the state. In comparison to only persisting the flat data, this way of storing the changes provides a few benefits:
 
   - Even if there was an error and the final state is incorrect, it can be recomputed completely. This is because the full history of data changes is preserved.
