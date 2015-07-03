@@ -77,7 +77,7 @@ main = hakyll $ do
     match "templates/*" $ compile templateCompiler
 
 
-    create ["blog/rss.xml"] $ do
+    create ["rss.xml"] $ do
          route idRoute
          compile $ do
              posts <- fmap (take 10) . recentFirst =<<
@@ -134,12 +134,9 @@ feedConfiguration = FeedConfiguration
     }
 
 rssBodyField :: String -> Context String
-rssBodyField key = field key $
-    return .
-    replaceAll "<iframe [^>]*>" (const "") .
-    withUrls wordpress .
-    withUrls absolute .
-    itemBody
+rssBodyField key = field key (\item -> do
+                                teaser <- teaserBody item
+                                return $ withUrls wordpress . withUrls absolute $ teaser)
   where
     wordpress = replaceAll "/index.html" (const "/")
     absolute x
