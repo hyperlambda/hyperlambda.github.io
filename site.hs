@@ -1,5 +1,7 @@
---------------------------------------------------------------------------------
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 import           Data.Monoid
 import           Hakyll
 import           Text.Pandoc.Options
@@ -8,6 +10,11 @@ import Data.List
 import Data.Maybe
 import Control.Applicative ((<$>))
 import System.FilePath
+import           Data.Binary                   (Binary (..))
+import           Data.Typeable                 (Typeable)
+import System.Process (rawSystem)
+import System.Exit
+import System.IO (hPutStrLn, stderr)
 
 
 --------------------------------------------------------------------------------
@@ -17,9 +24,9 @@ main = hakyll $ do
         route   idRoute
         compile copyFileCompiler
 
-    match "css/*" $ do
-        route   idRoute
-        compile compressCssCompiler
+    match "css/main.scss" $ do
+        route $ setExtension "css"
+        compile sassCompiler
 
     match (fromList ["about.rst", "contact.markdown"]) $ do
         route $ setExtension "html"
@@ -229,3 +236,22 @@ cleanDate = customRoute removeDatePrefix
 removeDatePrefix :: Identifier -> FilePath
 removeDatePrefix ident = replaceFileName file (drop 11 $ takeFileName file)
   where file = toFilePath ident
+
+--------------------------------------------------------------------------------
+newtype SassRunner = SassRunner FilePath
+    deriving (Binary, Eq, Ord, Show, Typeable)
+
+instance Writable SassRunner where
+    write dst (Item _ (SassRunner src)) = do
+      code <- rawSystem "bundle" ["exec", "sass", "--trace", "-t", "compressed", src, dst]
+      case code of
+        ExitSuccess -> return ()
+        ExitFailure err -> hPutStrLn stderr $ "Could not run sass for "++src++" to "++dst++": the command has returned error code "++show err
+
+sassCompiler :: Compiler (Item SassRunner)
+sassCompiler = do
+    path <- getResourceFilePath
+    debugCompiler $ "Compiling with sass: " ++ path
+    makeItem $ SassRunner path
+
+
