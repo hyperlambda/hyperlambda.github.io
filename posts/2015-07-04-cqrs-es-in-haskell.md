@@ -1,6 +1,6 @@
 ---
 author: Sarunas Valaskevicius
-title: CQRS/ES in Haskell
+title: Eventflow: CQRS/ES in Haskell
 toc: yes
 ---
 

@@ -9,9 +9,8 @@ body{
     font-weight:normal;
     font-size: 12pt;
     line-height:1.5;
-    padding:0;
     position:relative;
-    padding: 70px 10% 50px 10%;
+    padding: 40px 10% 50px 10%;
 }
 
 header {
@@ -51,7 +50,7 @@ h3 {
     margin: 1em 0;
 }
 div.sourceCode, pre.shell {
-    background-color: #FFFAF3;
+    background-color: #FFFEFA;
     border-color:#cfc4ca;
     border-style:solid;
     border-width:1px;
