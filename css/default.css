@@ -9,9 +9,8 @@ body{
     font-weight:normal;
     font-size: 12pt;
     line-height:1.5;
-    padding:0;
     position:relative;
-    padding: 70px 10% 50px 10%;
+    padding: 40px 10% 50px 10%;
 }
 
 header {
@@ -51,11 +50,12 @@ h3 {
     margin: 1em 0;
 }
 div.sourceCode, pre.shell {
-    background-color: #FFFAF3;
+    background-color: #FFFEFA;
     border-color:#cfc4ca;
     border-style:solid;
     border-width:1px;
     padding: 0.3em;
+    overflow-x: auto;
 }
 
 .sourceCode .kw { color: #268BD2; }
@@ -80,10 +80,11 @@ code{
 ul li:before {
 		content: "\25B8";
     color: #268BD2;
-    margin: 0 0.5em 0 1em;
+    margin: 0 0.5em 0 0;
 }
 
 ul li {
+    padding: 0 0 0 1em;
 }
 
 
@@ -135,4 +136,21 @@ em {
 }
 strong {
     font-weight: bold;
+}
+
+div#toc {
+    float: right;
+    margin: 0  0 1em 1em;
+    padding: 0.5rem 0.5rem 0.5rem 0;
+    background-color: #fafaf0;
+    border: 1px solid #eed;
+}
+
+#main-content-list li {
+    margin-top: 1em;
+}
+
+.teaser {
+    margin-left: 2em;
+    margin-top: 0;
 }

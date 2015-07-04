@@ -1,7 +1,13 @@
 --------------------------------------------------------------------------------
 {-# LANGUAGE OverloadedStrings #-}
-import           Data.Monoid (mappend)
+import           Data.Monoid
 import           Hakyll
+import           Text.Pandoc.Options
+import Control.Monad
+import Data.List
+import Data.Maybe
+import Control.Applicative ((<$>))
+import System.FilePath
 
 
 --------------------------------------------------------------------------------
@@ -16,17 +22,27 @@ main = hakyll $ do
         compile compressCssCompiler
 
     match (fromList ["about.rst", "contact.markdown"]) $ do
-        route   $ setExtension "html"
+        route $ setExtension "html"
         compile $ pandocCompiler
             >>= loadAndApplyTemplate "templates/default.html" defaultContext
             >>= relativizeUrls
+            >>= slashUrlsCompiler
 
     match "posts/*" $ do
-        route $ setExtension "html"
-        compile $ pandocCompiler
-            >>= loadAndApplyTemplate "templates/post.html"    postCtx
-            >>= loadAndApplyTemplate "templates/default.html" postCtx
-            >>= relativizeUrls
+        route   blogRoute
+
+        compile $ do
+            ident <- getUnderlying
+            toc <- getMetadataField ident "toc"
+            let writerSettings = case toc of
+                                    (Just "yes")  -> myWriterOptionsToc
+                                    Nothing     -> myWriterOptions
+            pandocCompilerWith myReaderOptions writerSettings
+                >>= saveSnapshot "content"
+                >>= loadAndApplyTemplate "templates/post.html"    postCtx
+                >>= loadAndApplyTemplate "templates/default.html" postCtx
+                >>= slashUrlsCompiler
+                >>= relativizeUrls
 
     create ["archive.html"] $ do
         route idRoute
@@ -41,6 +57,7 @@ main = hakyll $ do
                 >>= loadAndApplyTemplate "templates/archive.html" archiveCtx
                 >>= loadAndApplyTemplate "templates/default.html" archiveCtx
                 >>= relativizeUrls
+                >>= slashUrlsCompiler
 
 
     match "index.html" $ do
@@ -48,19 +65,167 @@ main = hakyll $ do
         compile $ do
             posts <- recentFirst =<< loadAll "posts/*"
             let indexCtx =
-                    listField "posts" postCtx (return posts) `mappend`
+                    listField "posts" (myTeaserCtx <> postCtx) (return $ take 7 posts) `mappend`
                     defaultContext
 
             getResourceBody
                 >>= applyAsTemplate indexCtx
                 >>= loadAndApplyTemplate "templates/default.html" indexCtx
+                >>= slashUrlsCompiler
                 >>= relativizeUrls
 
     match "templates/*" $ compile templateCompiler
 
 
+    create ["rss.xml"] $ do
+         route idRoute
+         compile $ do
+             posts <- fmap (take 10) . recentFirst =<<
+                 loadAllSnapshots "posts/*" "content"
+             renderRss feedConfiguration feedContext posts
+             >>= slashUrlsCompiler
+
 --------------------------------------------------------------------------------
+
+myTeaserCtx :: Context String
+myTeaserCtx = field "teaser" teaserBody
+-- myTeaserCtx = teaserField "teaser" "content" <> field "content" (\item -> itemBody <$> loadSnapshot (itemIdentifier item) "content")
+
+
 postCtx :: Context String
 postCtx =
     dateField "date" "%B %e, %Y" `mappend`
     defaultContext
+
+myWriterOptions :: WriterOptions
+myWriterOptions = defaultHakyllWriterOptions {
+      writerReferenceLinks = True
+    , writerHtml5 = True
+    , writerHighlight = True
+    }
+
+myWriterOptionsToc :: WriterOptions
+myWriterOptionsToc = myWriterOptions {
+      writerTableOfContents = True
+    , writerTOCDepth = 2
+    , writerTemplate = "$if(toc)$<div id=\"toc\">$toc$</div>$endif$\n$body$"
+    , writerStandalone = True
+    }
+
+myReaderOptions :: ReaderOptions
+myReaderOptions = defaultHakyllReaderOptions
+
+feedContext :: Context String
+feedContext = mconcat
+     [ rssBodyField "description"
+     , rssTitleField "title"
+     , wpUrlField "url"
+     , dateField "date" "%B %e, %Y"
+     ]
+
+
+feedConfiguration :: FeedConfiguration
+feedConfiguration = FeedConfiguration
+    { feedTitle = "Hyper Lambda"
+    , feedDescription = "All things functional"
+    , feedAuthorName = "Sarunas Valaskevicius"
+    , feedAuthorEmail = "rakatan@gmail.com"
+    , feedRoot = "http://www.hyperlambda.com"
+    }
+
+rssBodyField :: String -> Context String
+rssBodyField key = field key (\item -> do
+                                teaser <- teaserBody item
+                                return $ withUrls wordpress . withUrls absolute $ teaser)
+  where
+    wordpress = replaceAll "/index.html" (const "/")
+    absolute x
+      | head x == '/' = feedRoot feedConfiguration ++ x
+      | take 8 x == "/files/" = feedRoot feedConfiguration ++ drop 1 x
+      | otherwise = x
+
+empty :: Compiler String
+empty = return ""
+
+rssTitleField :: String -> Context a
+rssTitleField key = field key $ \i -> do
+    value <- getMetadataField (itemIdentifier i) "title"
+    let value' = liftM (replaceAll "&" (const "&amp;")) value
+    maybe empty return value'
+
+
+toWordPressUrl :: FilePath -> String
+toWordPressUrl url =
+    replaceAll "/index.html" (const "/") (toUrl url)
+
+wpUrlField :: String -> Context a
+wpUrlField key = field key $
+    fmap (maybe "" toWordPressUrl) . getRoute . itemIdentifier    
+
+teaserBody :: Item String -> Compiler String
+teaserBody item = do
+    body <- itemBody <$> loadSnapshot (itemIdentifier item) "content"
+    return $ extractTeaser . maxLengthTeaser . compactTeaser $ body
+  where
+    extractTeaser :: String -> String
+    extractTeaser [] = []
+    extractTeaser xs@(x : xr)
+        | "<!-- more -->" `isPrefixOf` xs = []
+        | otherwise = x : extractTeaser xr
+
+    maxLengthTeaser :: String -> String
+    maxLengthTeaser s = if isNothing $ findIndex (isPrefixOf "<!-- more -->") (tails s)
+                            then unwords (take 60 (words s))
+                            else s
+
+    compactTeaser :: String -> String
+    compactTeaser =
+        replaceAll "<iframe [^>]*>" (const "") .
+        replaceAll "<img [^>]*>" (const "") .
+        replaceAll "<p>" (const "") .
+        replaceAll "</p>" (const "") .
+        replaceAll "<blockquote>" (const "") .
+        replaceAll "</blockquote>" (const "") .
+        replaceAll "<strong>" (const "") .
+        replaceAll "</strong>" (const "") .
+        replaceAll "<ol>" (const "") .
+        replaceAll "</ol>" (const "") .
+        replaceAll "<ul>" (const "") .
+        replaceAll "</ul>" (const "") .
+        replaceAll "<li>" (const "") .
+        replaceAll "</li>" (const "") .
+        replaceAll "<h[0-9][^>]*>" (const "") .
+        replaceAll "</h[0-9]>" (const "") .
+        replaceAll "<pre.*" (const "") .
+        replaceAll "<a [^>]*>" (const "") .
+        replaceAll "</a>" (const "") .
+        replaceAll "<div [^>]*>" (const "") .
+        replaceAll "</div>" (const "")
+
+slashUrlsCompiler :: Item String -> Compiler (Item String)
+slashUrlsCompiler item = do
+    myRoute <- getRoute $ itemIdentifier item
+    return $ case myRoute of
+        Nothing -> item
+        Just _ -> fmap slashUrls item
+
+slashUrls :: String -> String 
+slashUrls = fileLinks . withUrls convert
+  where
+    convert = replaceAll "/index.html" (const "/")
+    fileLinks = replaceAll "/files/" (const "/files/")
+
+
+blogRoute :: Routes
+blogRoute  =
+     cleanDate 
+     `composeRoutes` gsubRoute ".html" (const "/index.html")
+     `composeRoutes` gsubRoute ".md" (const "/index.html")
+     `composeRoutes` gsubRoute ".lhs" (const "/index.html")
+
+cleanDate :: Routes
+cleanDate = customRoute removeDatePrefix
+
+removeDatePrefix :: Identifier -> FilePath
+removeDatePrefix ident = replaceFileName file (drop 11 $ takeFileName file)
+  where file = toFilePath ident

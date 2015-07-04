@@ -2,6 +2,13 @@
 title: Proudly growing software
 ---
 
-$partial("templates/post-list.html")$
+<ul id="main-content-list">
+    $for(posts)$
+        <li>
+            <a href="$url$">$title$</a> - $date$
+            $partial("templates/post-teaser.html")$
+        </li>
+    $endfor$
+</ul>
 
 <p>…or you can find more in the <a href="/archive.html">archives</a>.</p>
