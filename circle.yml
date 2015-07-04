@@ -4,6 +4,7 @@
 # cf. https://github.com/jaspervdj/hakyll/issues/340#issuecomment-96101869
 dependencies:
   override:
+    - bundle install
     - cabal install --dependencies-only
 
 # Compile pages during the test stage
