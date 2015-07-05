@@ -11,7 +11,7 @@ toc: yes
 
 # CQRS with Akka actors and functional domain models (01/2011)
 
-This is one of the first examples of CQRS in scala.
+This is one of the first examples of CQRS in scala. And it also is written in a functional style. One particularly interesting thing to note is that the `TradeLifecycle` is written as a Finite State Machine actor, which I think adds clarity to the readers of such class.
 
  - [blog](http://debasishg.blogspot.co.uk/2011/01/cqrs-with-akka-actors-and-functional.html)
  - [github](https://github.com/debasishg/cqrs-akka)
