@@ -94,7 +94,7 @@ Before we talk about specific commands, lets see how should they look from outsi
 type CommandHandler = [Event] -> RouteParameters -> Maybe [Event]
 ```
 
-A command handler takes a history of events, parameters for the current action, and results in a list of new events it has created. This is the main place where the business logic is enforced - and thus the commands can fail. To denote a failed command we'll ask it to return `Nothing` - for this we wrap the return type in the `Maybe` type ^[Instead of returning `Nothing` on a failure, we could also return the failure message - in which case we'd choose the `Either` type instead of `Maybe`].
+A command handler takes a history of events, parameters for the current action, and results in a list of new events it has created. This is the main place where the business logic is enforced - and thus the commands can fail. To denote a failed command we'll ask it to return `Nothing` - for this we wrap the return type in the `Maybe` type.
 
 We have only defined two commands for our domain - to create a new counter and increment an existing one.
 
