@@ -15,7 +15,7 @@ import           Data.Typeable                 (Typeable)
 import System.Process (rawSystem)
 import System.Exit
 import System.IO (hPutStrLn, stderr)
-
+import Text.XML.HXT.Core as HXT
 
 --------------------------------------------------------------------------------
 main :: IO ()
@@ -207,7 +207,17 @@ teaserBody item = do
         replaceAll "<a [^>]*>" (const "") .
         replaceAll "</a>" (const "") .
         replaceAll "<div [^>]*>" (const "") .
-        replaceAll "</div>" (const "")
+        replaceAll "</div>" (const "") .
+        removeToc
+
+    removeToc :: String -> String
+    removeToc s = concat $ (runLA . xshow) (hread >>> manipulate) $ "<html><body>"++s++"</body></html>"
+      where
+        manipulate = processTopDown (
+          none
+          `HXT.when`
+          (isElem >>> hasName "div" >>> getAttrValue "id" >>> isA (=="toc"))
+          )
 
 slashUrlsCompiler :: Item String -> Compiler (Item String)
 slashUrlsCompiler item = do
@@ -246,7 +256,7 @@ instance Writable SassRunner where
       code <- rawSystem "bundle" ["exec", "sass", "--trace", "-t", "compressed", src, dst]
       case code of
         ExitSuccess -> return ()
-        ExitFailure err -> hPutStrLn stderr $ "Could not run sass for "++src++" to "++dst++": the command has returned error code "++show err
+        ExitFailure e -> hPutStrLn stderr $ "Could not run sass for "++src++" to "++dst++": the command has returned error code "++show e
 
 sassCompiler :: Compiler (Item SassRunner)
 sassCompiler = do
