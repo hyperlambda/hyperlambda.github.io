@@ -16,10 +16,15 @@ import System.Process (rawSystem)
 import System.Exit
 import System.IO (hPutStrLn, stderr)
 import Text.XML.HXT.Core as HXT
+import GHC.IO.Encoding as E
 
 --------------------------------------------------------------------------------
 main :: IO ()
-main = hakyll $ do
+main = do
+  setLocaleEncoding E.utf8
+  setFileSystemEncoding E.utf8
+  setForeignEncoding E.utf8
+  hakyll $ do
     match "images/*" $ do
         route   idRoute
         compile copyFileCompiler
