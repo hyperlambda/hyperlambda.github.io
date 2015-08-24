@@ -19,7 +19,7 @@ The few goals of this experiment are:
 
   - bring state changes and the code that uses the state closer;
   - reduce the explicit usage of state so that it allows developers to focus on the events more;
-  - minimise the amount of code required to describe an a
+  - minimise the amount of code required to describe an aggregate.
 
 As such, functional programming allows the expresivity to define generators of command handlers that change according to the flow of aggregate events. When a new event is created, the command handlers, that are affected, are replaced by new ones, that handle the same commands, however they already know that the event has occurred and do not need to check an externally stored state.
 
@@ -82,6 +82,8 @@ case class EventStreamConsumer(
 
 The structure above both gives a command handler at all times, and also provides an event handler, which, when successful, returns a continuation for the flow. If at some point the event handler returns `None` the continuqtion is not possible and the flow is finished.
 
+The code snippet below shows how is the structure describing aggregate flow converted to the runnable stream consumer.
+
 ````scala
 def esRunnerCompiler[A](initCmdH: CommandH)(esRunner: Flow[A]): Option[EventStreamConsumer] =
   esRunner.fold(
@@ -99,5 +101,15 @@ def esRunnerCompiler[A](initCmdH: CommandH)(esRunner: Flow[A]): Option[EventStre
   )
 ````
 
+The compilation function is initially called with an empty command handler. Subsequent `SetCommandHandler` actions overide it until the `EventHandler` action is met. At this point, the compilation is suspended and a new `EventStreamConsumer` is constructed, that will resume the interpratation of the input actions once an event is processed.
+
 Summary
 =======
+
+While the counter example is very minimalistic, it can show how to couple the aggregate state and the logic that uses it coherently. This way there is less context switching required from developers to define an aggregate. The resulting code is concise and easy to reason about.
+
+Another benefit of such approach is that the code execution is separated from the aggregate event flow definition, and they could be extended independently.
+
+In future I will try to describe more complex aggregates using the Event Flow. The main elements I will explore next is the flow forking and debugging a system defined in such way.
+
+But more importantly, what do you think of such approach? Does it help to solve the problems it aims to help with? Are the problems it is solving relevant for you?
