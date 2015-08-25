@@ -9,7 +9,7 @@ Modelling an aggregate
 
 An aggregate in a DDD [link] system defines a consistency boundary for the entities it describes. Usually this is implemented as a set of entities, where one of them is denoted as the main one - it is the aggregate root. To the outside world this aggregate root is more or less a black box. No entitity below the aggregate root can be referenced by other aggregates. This is required to ensure that the aggregate can maintain the children entities consistent at all times.
 
-Such approach to model aggregates is good, and is indeed working in many applications. One downside of it however is in an Event Sourced [ link] application, where the model is logically split into two models: state and events. When implementing an aggregate, developers need to think in terms of both the concrete state and the flow of aggregate events. This also usually requires a considerable amount of code to support it. An aggregate is loaded from past events, where all entities restore their data by providing event handlers. Then, when new commands are accepted, the command handler checks the state data, and emits new events.
+Such approach to model aggregates is good, and is indeed working in many applications. One downside of it however in an Event Sourced [ link] application is that it splits the model into two logical components: the current state and aggregate events. When implementing an aggregate, developers need to think in terms of both the concrete state and the flow of aggregate events. This also usually requires a considerable amount of code to support it. An aggregate is loaded from the past events, where all entities restore their data by providing event handlers. Then, when a new command is being accepted, the command handler checks the state data, and emits new events.
 
 
 Making implicit explicit
@@ -17,11 +17,11 @@ Making implicit explicit
 
 The few goals of this experiment are:
 
-  - bring state changes and the code that uses the state closer;
+  - bring the state changes and the code that uses the state closer;
   - reduce the explicit usage of state so that it allows developers to focus on the events more;
   - minimise the amount of code required to describe an aggregate.
 
-As such, functional programming allows the expresivity to define generators of command handlers that change according to the flow of aggregate events. When a new event is created, the command handlers, that are affected, are replaced by new ones, that handle the same commands, however they already know that the event has occurred and do not need to check an externally stored state.
+As it happens, functional programming allows the expresivity to define generators of command handlers that change according to the flow of aggregate events. When a new event is created, the command handlers, that are affected, are replaced by new ones, that handle the same commands, however they already know that the event has occurred and do not need to check an externally stored state.
 
 How does it look like?
 ======================
