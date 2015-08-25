@@ -11,7 +11,7 @@ An aggregate in a DDD system defines a consistency boundary for the entities it 
 
 Such approach to model aggregates is good, and it indeed works well for many applications. One downside of it, however, in an Event Sourced application, is that it splits the model into two logical components: the current state and aggregate events. When implementing an aggregate, developers need to think in both the terms of the concrete state and the flow of aggregate events. This also usually requires a considerable amount of code to support it. An aggregate is loaded from the past events, where all entities restore their data by providing event handlers. Then, when a new command is being processed, the command handler checks the state data and emits new events.
 
-Making implicit explicit
+So what can we do?
 ========================
 
 The few goals of this experiment are:
@@ -102,7 +102,7 @@ def esRunnerCompiler[A](initCmdH: CommandH)(esRunner: Flow[A]): Option[EventStre
 
 The compilation function is initially called with an empty command handler. All later `SetCommandHandler` actions override it until  an `EventHandler` action is met. At this point, the compilation is suspended and a new `EventStreamConsumer` is constructed. The interpretation of the input actions will resume once the next event is processed.
 
-Summary
+The final bits
 =======
 
 While the counter example is very minimalistic, it can show how to couple the aggregate state and the logic that uses it coherently. This way there is less context switching required from developers to define an aggregate. The resulting code is concise and easy to  reason about.
