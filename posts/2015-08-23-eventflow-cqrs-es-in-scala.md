@@ -7,7 +7,7 @@ toc: yes
 Modelling an aggregate
 ========
 
-An aggregate in a DDD system defines a consistency boundary for the entities it describes. Usually, this is implemented as a set of entities, where one of them is denoted as the main one - it is the aggregate root. To the outside world, this aggregate root is more or less a black box. No entity below the aggregate root can be referenced by other aggregates. This is required to ensure that the aggregate can maintain the children entities consistent at all times.
+An aggregate in a DDD system defines a consistency boundary for the entities it describes. Usually, this is implemented as a set of entities, where one of them is denoted as the aggregate root. To the outside world, this aggregate root is more or less a black box. No entity below the aggregate root can be referenced by other aggregates. This is required to ensure that the aggregate can maintain the children entities consistent at all times.
 
 Such approach to model aggregates is good, and it indeed works well for many applications. One downside of it, however, in an Event Sourced application, is that it splits the model into two logical components: the current state and aggregate events. When implementing an aggregate, developers need to think in both the terms of the concrete state and the flow of aggregate events. This also usually requires a considerable amount of code to support it. An aggregate is loaded from the past events, where all entities restore their data by providing event handlers. Then, when a new command is being processed, the command handler checks the state data and emits new events.
 
@@ -29,7 +29,7 @@ For the usage the example I'll be writing a very simple aggregate - a counter th
 
 The aggregate is defined by a list of possible flows. Each flow sets possible commands handler, if it is available at that point, and an event handler. The first command handler that handles the command for the aggregate wins, and no other command handlers will be checked. However, when an event comes, all current event listeners will be notified.
 
-Having a list flows is useful when we want do describe a complex aggregate, where the handlers can fork into separate flows. Once a flow reaches the end of its life - by not defining a `waitFor` event listener - it is removed from the list altogether.
+Having a list of flows is useful when we want do describe a complex aggregate, where the handlers can fork into separate flows. Once a flow reaches the end of its life - by not defining a `waitFor` event listener - it is removed from the list altogether.
 
 ````scala
 val aggregateLogic: List[Flow[Unit]] = List(
@@ -68,7 +68,7 @@ As the flow is defined by the `Flow` monad, we could as well have used the _for 
 How does it work?
 =================
 
-The main element - the `Flow` monad is defined as a free monad using the excellent cats library. Each definition builds a lazy, recursive data structure from just a few operations - they set up the command and the event handlers.
+The main element - the `Flow` monad is defined as a free monad using the excellent _cats_ library. Each definition builds a lazy, recursive data structure from just a few operations - they set up the command and the event handlers.
 
 Perhaps the most complex bit is the consumption of such structure when processing aggregate commands and events. To make this easier, the several aggregate definition steps are flattened to the following:
 
@@ -81,7 +81,7 @@ case class EventStreamConsumer(
 
 The structure above both gives a command handler at all times and also provides an event handler. When an event is handled successfully, the whole `EventStreamConsumer` is replaced by the returned continuation. When the event handler returns `None`, then the continuation is not possible and the flow is finished.
 
-The code snippet below shows how is the flattening structure translation.
+The code snippet below shows the flattening structure translation:
 
 ````scala
 def esRunnerCompiler[A](initCmdH: CommandH)(esRunner: Flow[A]): Option[EventStreamConsumer] =
@@ -105,9 +105,7 @@ The compilation function is initially called with an empty command handler. All 
 The final bits
 =======
 
-While the counter example is very minimalistic, it can show how to couple the aggregate state and the logic that uses it coherently. This way there is less context switching required from developers to define an aggregate. The resulting code is concise and easy to  reason about.
-
-Another benefit of such approach is that the code execution is separated from the aggregate event flow definition, and both can be extended independently.
+While the counter example is very minimalistic, it can show how to couple the aggregate state and the logic that uses it coherently. This way there is less context switching required from developers to define an aggregate. The resulting code is concise and easy to  reason about. Another benefit of such approach is that the code execution is separated from the aggregate event flow definition, and both can be extended independently.
 
 In future, I will try to describe more complex aggregates using the Event Flow. The main elements I will explore next are the flow forking and debugging a system defined in such way.
 
