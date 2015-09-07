@@ -40,7 +40,9 @@ val aggregateLogic: List[Flow[Unit]] = List(
 )
 ````
 
-The above example defines two flows. The first of them sets a command handler to allow a counter being created and is finished once the created event is emitted. The second flow starts with no defined handler. First, it waits for the aggregate to be created. Once that happens, it passes the execution to the counter logic. The aggregateLogic also constitutes the aggregate root, that is refernced by the outside world by the counter's id.
+The above example defines two flows. The first of them sets a command handler to allow a counter being created. It also sets an event listener to wait for the `Created` event, as this makes the flow active until such event is emitted. Once the `Created` event is emitted, the event handler returns without continuation and the flow terminates.
+
+The second flow starts with no defined handler. First, it waits for the aggregate to be created. Once that happens, it passes the execution to the counter logic. The aggregateLogic is also the aggregate root, that is referenced by the outside world by the counter's id.
 
 Note, while the purpose of the example above was to show the usage of several flows for an aggregate, it could also be refactored to one flow. The switch to the counter logic could have been set in the first flow, just after the aggregate creation event is received.
 
@@ -68,22 +70,83 @@ As the flow is defined by the `Flow` monad, we could as well have used the _for 
 How does it work?
 =================
 
+## Defining a flow
+
 The main element - the `Flow` monad is defined as a free monad using the excellent _cats_ library. Each definition builds a lazy, recursive data structure from just a few operations - they set up the command and the event handlers.
 
 ````scala
-  type CommandH = PartialFunction[Cmd, List[String] Xor List[Evt]]
-  type EventH[A] = PartialFunction[Evt, A]
+type CommandH = PartialFunction[Cmd, List[String] Xor List[Evt]]
+type EventH[A] = PartialFunction[Evt, A]
 
-  sealed trait FlowF[+Next]
-  case class SetCommandHandler[Next](cmdh: CommandH, next: Next) extends FlowF[Next]
-  case class EventHandler[Next, A](evth: EventH[A], whenHandled: A => Next) extends FlowF[Next]
+sealed trait FlowF[+Next]
+case class SetCommandHandler[Next](cmdh: CommandH, next: Next) extends FlowF[Next]
+case class EventHandler[Next, A](evth: EventH[A], whenHandled: A => Next) extends FlowF[Next]
 ````
 
-The agebraic data type (ADT) FlowF stands for the flow functor, with the relevant flow operations as its constructors. The functor instance is defined as following
+The algebraic data type (ADT) `FlowF` stands for the flow functor, with the relevant flow operations as its constructors. The functor instance is defined as following:
 
-...
+````scala
+implicit object FlowFunctor extends Functor[FlowF] {
+    def map[A, B](fa: FlowF[A])(f: A => B): FlowF[B] = fa match {
+        case ch: SetCommandHandler[A] => SetCommandHandler[B](ch.cmdh, f(ch.next))
+        case eh: EventHandler[A, t] => EventHandler[B, t](eh.evth, eh.whenHandled andThen f)
+    }
+}
+````
 
-This structure allows a type safe 
+Because we have defined the flow to be a functor, we also get a monad for free:
+
+````scala
+type Flow[A] = Free[FlowF, A]
+````
+
+To illustrate what a monadic flow definition is translated to, lets use a few steps of defining a counter:
+````scala
+  handler {
+    case Increment => emitEvent(Incremented)
+    case Decrement => if (c > 0) emitEvent(Decremented)
+                      else failCommand("Counter cannot be decremented")
+  } >>
+  waitFor {
+    case Incremented => c + 1
+    case Decremented => c - 1
+  } >>= ((cc: Int) =>
+    handler {
+        case Increment => emitEvent(Incremented)
+        case Decrement => if (cc > 0) emitEvent(Decremented)
+                          else failCommand("Counter cannot be decremented")
+    } >> ...
+  )
+````
+
+Which is transformed to a trampolined data structure logically equivalent to:
+
+````scala
+SetCommandHandler({
+    case Increment => emitEvent(Incremented)
+    case Decrement => if (c > 0) emitEvent(Decremented)
+                      else failCommand("Counter cannot be decremented")
+  },
+  EventHandler({
+      case Incremented => c + 1
+      case Decremented => c - 1
+    },
+    ((cc: Int) =>
+      SetCommandHandler({
+        case Increment => emitEvent(Incremented)
+        case Decrement => if (cc > 0) emitEvent(Decremented)
+                          else failCommand("Counter cannot be decremented")
+      },
+      ...
+      )
+    )
+  )
+)
+````
+
+The exact structure building (and using) process can be seen in the cats [source for the free monads](https://github.com/non/cats/blob/672e0105f2d0136c3185ff79300a002384a2ec8b/free/src/main/scala/cats/free/Free.scala).
+
+## Consuming a defined flow
 
 Perhaps the most complex bit is the consumption of such structure when processing aggregate commands and events. To make this easier, the several aggregate definition steps are flattened to the following:
 
@@ -94,9 +157,9 @@ case class EventStreamConsumer(
     )
 ````
 
-The structure above both gives a command handler at all times and also provides an event handler. When an event is handled successfully, the whole `EventStreamConsumer` is replaced by the returned continuation. When the event handler returns `None`, then the continuation is not possible and the flow is finished.
+The type above both gives a command handler at all times and also provides an event handler. When an event is handled successfully, the whole `EventStreamConsumer` is replaced by the returned continuation. When the event handler returns `None`, then the continuation is not possible and the flow is finished.
 
-The code snippet below shows the flattening structure translation:
+The code snippet below shows the flattening structure translation. It uses the free monad's fold for the step-wise deconstruction of a given flow:
 
 ````scala
 def esRunnerCompiler[A](initCmdH: CommandH)(esRunner: Flow[A]): Option[EventStreamConsumer] =
