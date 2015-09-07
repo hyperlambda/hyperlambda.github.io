@@ -40,7 +40,7 @@ val aggregateLogic: List[Flow[Unit]] = List(
 )
 ````
 
-The above example defines two flows. The first of them sets a command handler to allow a counter being created and is finished once the created event is emitted. The second flow starts with no defined handler. First, it waits for the aggregate to be created. Once that happens, it passes the execution to the counter logic.
+The above example defines two flows. The first of them sets a command handler to allow a counter being created and is finished once the created event is emitted. The second flow starts with no defined handler. First, it waits for the aggregate to be created. Once that happens, it passes the execution to the counter logic. The aggregateLogic also constitutes the aggregate root, that is refernced by the outside world by the counter's id.
 
 Note, while the purpose of the example above was to show the usage of several flows for an aggregate, it could also be refactored to one flow. The switch to the counter logic could have been set in the first flow, just after the aggregate creation event is received.
 
@@ -69,6 +69,21 @@ How does it work?
 =================
 
 The main element - the `Flow` monad is defined as a free monad using the excellent _cats_ library. Each definition builds a lazy, recursive data structure from just a few operations - they set up the command and the event handlers.
+
+````scala
+  type CommandH = PartialFunction[Cmd, List[String] Xor List[Evt]]
+  type EventH[A] = PartialFunction[Evt, A]
+
+  sealed trait FlowF[+Next]
+  case class SetCommandHandler[Next](cmdh: CommandH, next: Next) extends FlowF[Next]
+  case class EventHandler[Next, A](evth: EventH[A], whenHandled: A => Next) extends FlowF[Next]
+````
+
+The agebraic data type (ADT) FlowF stands for the flow functor, with the relevant flow operations as its constructors. The functor instance is defined as following
+
+...
+
+This structure allows a type safe 
 
 Perhaps the most complex bit is the consumption of such structure when processing aggregate commands and events. To make this easier, the several aggregate definition steps are flattened to the following:
 
