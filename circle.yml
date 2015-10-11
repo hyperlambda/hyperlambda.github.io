@@ -10,6 +10,7 @@ general:
 dependencies:
   override:
     - bundle install
+    - cabal update
     - cabal install --dependencies-only
 
 # Compile pages during the test stage
