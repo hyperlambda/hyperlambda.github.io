@@ -23,6 +23,7 @@ run:	build
 deploy:
 	echo ${CNAME} > _site/CNAME
 	rm -rf _site/.git
+	cp circle.yml _site/
 	cd _site && git init && git add .
 	cd _site && git config user.email "nobody@circleci.com"
 	cd _site && git config user.name CircleCI
