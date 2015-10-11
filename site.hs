@@ -48,6 +48,7 @@ main = do
             toc <- getMetadataField ident "toc"
             let writerSettings = case toc of
                                     (Just "yes")  -> myWriterOptionsToc
+                                    (Just "no")  -> myWriterOptions
                                     Nothing     -> myWriterOptions
             pandocCompilerWith myReaderOptions writerSettings
                 >>= saveSnapshot "content"
