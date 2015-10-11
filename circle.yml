@@ -1,10 +1,16 @@
 # This is the configuration file for circleci.com (CI which builds the site)
 
+general:
+    branches:
+        ignore:
+            - master
+
 # Manually install to avoid install conflicts
 # cf. https://github.com/jaspervdj/hakyll/issues/340#issuecomment-96101869
 dependencies:
   override:
     - bundle install
+    - cabal update
     - cabal install --dependencies-only
 
 # Compile pages during the test stage
