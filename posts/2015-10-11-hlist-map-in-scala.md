@@ -50,7 +50,7 @@ val x = 12 :: "asd" :: () :: false :: "XX" :: 10 :: HNil
 Mapping over an HList
 ======
 
-One of "not exactly trivial" operations is to map over such data structure. It has to match the input type with all types in the HList and apply the given function to the matching elements. Resulting type is a modified HList, with some elements replaced by the given function.
+One of the "not exactly trivial" operations on an HList is to map over it. To do so, it has to match the input type with all types in the HList and apply the given function to the matching elements. Resulting type is a modified HList, with some elements replaced by the given function.
 
 A mapper can be defined as:
 
