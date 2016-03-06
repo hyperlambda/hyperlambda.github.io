@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <title>Hyper Lambda - Eventflow: CQRS/ES in Haskell</title>
+        <link rel="stylesheet" type="text/css" href="../../css/main.css" />
+        <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Merriweather:300,300italic,700|Source+Code+Pro" />
+        <link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.hyperlambda.com/rss.xml" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body>
+        <div id="header">
+            <div id="logo">
+                <a href="../../">hyper λ</a>
+            </div>
+            <div id="navigation">
+                <a href="../../archive.html">Archive</a>
+            </div>
+        </div>
+
+        <div id="content">
+            <h1>Eventflow: CQRS/ES in Haskell</h1>
+
+            <div class="info">
+    Posted on July  4, 2015
+    
+        by Sarunas Valaskevicius
+    
+</div>
+
+<div id="toc"><ul>
+<li><a href="#what-is-it-all-about">What is it all about?</a></li>
+<li><a href="#domain">Domain</a><ul>
+<li><a href="#events">Events</a></li>
+<li><a href="#commands">Commands</a></li>
+<li><a href="#projections">Projections</a></li>
+<li><a href="#queries">Queries</a></li>
+</ul></li>
+<li><a href="#infrastructure">Infrastructure</a><ul>
+<li><a href="#persistence">Persistence</a></li>
+<li><a href="#command-handling">Command handling</a></li>
+<li><a href="#running-projections">Running projections</a></li>
+<li><a href="#http-api">Http api</a></li>
+</ul></li>
+<li><a href="#summary-and-future-work">Summary and future work</a></li>
+</ul></div>
+<h1 id="what-is-it-all-about">What is it all about?</h1>
+<p><a href="http://martinfowler.com/bliki/CQRS.html">CQRS</a> is not a new architectural pattern. And it is used more and more in complex applications, that require a highly scalable infrastructure.</p>
+<p>The main principle of CQRS is based on <a href="http://martinfowler.com/bliki/CommandQuerySeparation.html">CQS</a> - the Command Query Separation principle. It states that a method in object oriented paradigm must by either a command or a query. Commands should only concern themselves about changing data. In contrast, queries must not change the data but only return it to the client.</p>
+<p>CQRS takes this principle a step up. It <a href="http://codebetter.com/gregyoung/2010/02/16/cqrs-task-based-uis-event-sourcing-agh/">describes</a> that the command methods should be segregated from the query methods. Instead of having one model for the data there are now two - the write model for commands, and the read model for queries. In effect, it is now possible maintain and optimise the write side separately from the read side.</p>
+<!--more-->
+<p><a href="http://martinfowler.com/eaaDev/EventSourcing.html">Event Sourcing</a> is an architectural style where the application is required to <em>persist all changes as new Event records</em>. Events are the primary source of truth when restoring the state. In comparison to only persisting the flat data, this way of storing the changes provides a few benefits:</p>
+<ul>
+<li>Even if there was an error and the final state is incorrect, it can be recomputed completely. This is because the full history of data changes is preserved.</li>
+<li>One could also tell what was the application state at any given point in time.</li>
+<li>Provide retrospective statistics of the application’s usage.</li>
+<li>Frequently, there is a lot of time spent in database operations - calculating which rows are changing, locking them, and managing transactions. Event sourcing minimises the requirements for such complexity - the only operation used is append to the data store.</li>
+</ul>
+<p>Both architectural styles solve of different problems and can be <a href="http://codebetter.com/gregyoung/2010/02/13/cqrs-and-event-sourcing/">combined</a> to get the benefits of both and more. CQRS/ES application usually has enough flexibility to express the needs of different businesses. Yet, it is also of a rather restricted structure - such restrictions define the shape of the infrastructural components allowing for more reusability across applications. Using off-the-shelf products is one of the major ways to avoid much of the <a href="http://worrydream.com/refs/Brooks-NoSilverBullet.pdf">accidental complexity</a> and to reduce the development cost.</p>
+<p>In this article I will show an example of how to implement a CQRS/ES web application in Haskell. I will be using a simple domain of increment counters - one for which CQRS/ES pattern is possibly an overhead, but the mechanics for a more complex domains are similar so it is a good starting point to describe them.</p>
+<p>As the article is written in <a href="http://www.literateprogramming.com/">Literate Haskell</a>, I will start with the language extensions to be used by the example:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">{-# LANGUAGE DeriveGeneric             #-}</span>
+<span class="ot">{-# LANGUAGE OverloadedStrings         #-}</span></code></pre></div>
+<p>The imported extensions will help to serialise the data to JSON automatically and will also overload string literals so that they will not need to be casted to the <code>Text</code> type explicitly.</p>
+<p>The application imports are separated to three sections: web framework, JSON handling library and generic Haskell libraries:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">import qualified</span> <span class="dt">Network.HTTP.Types.Header</span> <span class="kw">as</span> <span class="dt">Http</span>
+<span class="kw">import qualified</span> <span class="dt">Network.HTTP.Types.Method</span> <span class="kw">as</span> <span class="dt">Http</span>
+<span class="kw">import qualified</span> <span class="dt">Network.HTTP.Types.Status</span> <span class="kw">as</span> <span class="dt">Http</span>
+<span class="kw">import           </span><span class="dt">Network.Wai</span>               <span class="kw">as</span> <span class="dt">W</span>
+<span class="kw">import           </span><span class="dt">Network.Wai.Handler.Warp</span>  (run)
+
+<span class="kw">import           </span><span class="dt">Data.Aeson</span>
+<span class="kw">import           </span><span class="dt">GHC.Generics</span>
+
+<span class="kw">import           </span><span class="dt">Control.Applicative</span>       ((&lt;$&gt;))
+<span class="kw">import           </span><span class="dt">Control.Concurrent</span>
+<span class="kw">import           </span><span class="dt">Control.Monad</span>             (guard, when)
+<span class="kw">import qualified</span> <span class="dt">Data.Traversable</span>          <span class="kw">as</span> <span class="dt">Traversable</span>
+<span class="kw">import           </span><span class="dt">Data.Maybe</span>                (fromMaybe, listToMaybe, isNothing)
+<span class="kw">import qualified</span> <span class="dt">Data.ByteString.Lazy</span>      <span class="kw">as</span> <span class="dt">B</span>
+<span class="kw">import qualified</span> <span class="dt">Data.Text</span>                 <span class="kw">as</span> <span class="dt">T</span>
+<span class="kw">import qualified</span> <span class="dt">Data.Map.Strict</span>           <span class="kw">as</span> <span class="dt">Map</span></code></pre></div>
+<h1 id="domain">Domain</h1>
+<h2 id="events">Events</h2>
+<p>When growing an event sourced application, we automate the business processes based on the events happening in them. In a process modelled as a state machine, an event would denote a transition, that has already taken place and it carries all the data needed to describe it completely. In terms of business processes, an event is an <em>irrevocable record that an action has happened</em>. As such, it is good to <a href="http://ziobrando.blogspot.co.uk/2013/11/introducing-event-storming.html">model events</a> based on the business the application is automating - the changes in business processes can be projected to the application with a minimal level of the required translation between the business language and the application structure.</p>
+<p>As parts of the domain have to be consistent at all times, we’ll draw boundaries around those parts and call them <a href="http://geekswithblogs.net/Optikal/archive/2013/04/07/152643.aspx">aggregates</a>. Commands handlers, when validating if a particular command can be executed, will receive all events of the same aggregate and will have to produce a set of events, that are consistent within the aggregate. We’ll discuss about commands and their consistency more in depth later. For now, it’s only enough to decide what is going to be the type of an identifier used for aggregates. I have chosen a <code>String</code> for this example as the counters in the domain are named thus it is a natural key for the aggregate, as long as its not empty:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">newtype</span> <span class="dt">AggregateId</span> <span class="fu">=</span> <span class="dt">AggregateId</span> <span class="dt">String</span> <span class="kw">deriving</span> (<span class="dt">Eq</span>, <span class="dt">Show</span>, <span class="dt">Ord</span>, <span class="dt">Generic</span>)
+
+<span class="ot">aggregateIdFromString ::</span> <span class="dt">String</span> <span class="ot">-&gt;</span> <span class="dt">Maybe</span> <span class="dt">AggregateId</span>
+aggregateIdFromString <span class="st">&quot;&quot;</span> <span class="fu">=</span> <span class="dt">Nothing</span>
+aggregateIdFromString s <span class="fu">=</span> <span class="dt">Just</span> <span class="fu">$</span> <span class="dt">AggregateId</span> s</code></pre></div>
+<p>As the system I am modelling in this example is very simple, I have only defined two domain events:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">data</span> <span class="dt">Event</span> <span class="fu">=</span> <span class="dt">CounterCreated</span> <span class="dt">AggregateId</span>
+           <span class="fu">|</span> <span class="dt">Incremented</span> <span class="kw">deriving</span> (<span class="dt">Eq</span>, <span class="dt">Show</span>, <span class="dt">Generic</span>)</code></pre></div>
+<p>We can either create a new counter, or increment it if it exists.</p>
+<h2 id="commands">Commands</h2>
+<p>Before we talk about specific commands, lets see how should they look from outside:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">CommandHandler</span> <span class="fu">=</span> [<span class="dt">Event</span>] <span class="ot">-&gt;</span> <span class="dt">RouteParameters</span> <span class="ot">-&gt;</span> <span class="dt">Maybe</span> [<span class="dt">Event</span>]</code></pre></div>
+<p>A command handler takes a history of events, parameters for the current action, and results in a list of new events it has created. This is the main place where the business logic is enforced - and thus the commands can fail. To denote a failed command we’ll ask it to return <code>Nothing</code> - for this we wrap the return type in the <code>Maybe</code> type.</p>
+<p>We have only defined two commands for our domain - to create a new counter and increment an existing one.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">createCounterHandler ::</span> <span class="dt">CommandHandler</span>
+createCounterHandler events args <span class="fu">=</span> <span class="kw">do</span>
+  aggregateId <span class="ot">&lt;-</span> aggregateIdFromString <span class="fu">=&lt;&lt;</span> Map.lookup <span class="st">&quot;id&quot;</span> args
+  validateThatIsNew aggregateId events
+  return [<span class="dt">CounterCreated</span> aggregateId]
+    <span class="kw">where</span>
+      validateThatIsNew aggregateId <span class="fu">=</span> guard <span class="fu">.</span> notElem (<span class="dt">CounterCreated</span> aggregateId)</code></pre></div>
+<p>First, <code>createCounterHandler</code> takes an <code>id</code> of the counter to create and converts it to the internal representation. Please note that as this function is running in a <code>Maybe</code> monad - the map lookup can return <code>Nothing</code> and the counter creation will fail. In a similar fashion, we check if the same identifier has not been used before to create a counter, and guard against that case as well. To those wondering why is the second argument missing in the <code>validateThatIsNew</code> function definition, whilst it exist when we call it, please see the <a href="https://wiki.haskell.org/Pointfree">pointfree</a> programming style. The pointfree style, when applied with care, results in simple, pleasant for the eyes code and is generally the preferred style to express functions.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">incHandler ::</span> <span class="dt">CommandHandler</span>
+incHandler events args <span class="fu">=</span> <span class="kw">do</span>
+  aggregateId <span class="ot">&lt;-</span> aggregateIdFromString <span class="fu">=&lt;&lt;</span> Map.lookup <span class="st">&quot;id&quot;</span> args
+  validateThatIsCreated aggregateId events
+  return [<span class="dt">Incremented</span>]
+    <span class="kw">where</span>
+      validateThatIsCreated aggregateId <span class="fu">=</span> guard <span class="fu">.</span> elem (<span class="dt">CounterCreated</span> aggregateId)</code></pre></div>
+<p>The increment command handler starts similarly as the counter creation - however it validates that the counter exists - it is not possible to increment a non existing counter.</p>
+<h2 id="projections">Projections</h2>
+<p>While the main purpose of commands is to enforce the consistency of the business rules in applications, projections solve a different problem. The purpose of projections is to optimise the data for the read side. Queries will use the data flattened by projections to retrieve the results for the clients quickly. As such, when commands are creating new events in the system, the projections race to catch up with them and modify their projected data representations. There can be as many projections as there are use cases in the system - and as the number can be high, or involve complex computations, they are run in parallel and do not block commands. Not blocking the commands means higher throughput on the write side and easier scalability as you can run projections on any number of nodes without needing to lock the write side. The drawback of this is that they are <a href="http://www.allthingsdistributed.com/2007/12/eventually_consistent.html">eventually consistent</a> - that is, the data in the projections will be stale or, in other words, slightly out of date.</p>
+<p>I’ll start by defining a generic data type for a projection:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">data</span> <span class="dt">Projection</span> a <span class="fu">=</span> <span class="dt">Projection</span> {
+<span class="ot">      initProjection ::</span> a,
+<span class="ot">      runProjection  ::</span> a <span class="ot">-&gt;</span> <span class="dt">Event</span> <span class="ot">-&gt;</span> <span class="dt">AggregateId</span> <span class="ot">-&gt;</span> a
+  }</code></pre></div>
+<p>A projection will maintain its own data structure of type <code>a</code>, where it flattens the incoming system events. <code>initProjection</code> will know how to initialise the custom data structure for the particular use case. Once we know the initial state, we will use <code>runProjection</code> that accepts the state before an event, a system event, an aggregate id and will produce an amended data structure with the effects of the given event applied.</p>
+<p>Let’s create our first projection. As we want to list all created counters, our first projection will maintain a flattened list of all counter identifiers:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">AllCountersProjectionState</span> <span class="fu">=</span> [<span class="dt">AggregateId</span>]</code></pre></div>
+<p>The projection will be initialised with an empty list, that will be appended by any new created counters:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">allCountersProjection ::</span> <span class="dt">Projection</span> <span class="dt">AllCountersProjectionState</span>
+allCountersProjection <span class="fu">=</span> <span class="dt">Projection</span> {
+  initProjection <span class="fu">=</span> [],
+  runProjection <span class="fu">=</span> runner
+} <span class="kw">where</span>
+  runner counters (<span class="dt">CounterCreated</span> counterId) _ <span class="fu">=</span> counters <span class="fu">++</span> [counterId]
+  runner counters _ _ <span class="fu">=</span> counters</code></pre></div>
+<p>Simple! Our next projection is just a tiny bit more complicated - it will maintain a map of counter identifiers to a number of times it was incremented:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">CounterProjectionState</span> <span class="fu">=</span> <span class="dt">Map.Map</span> <span class="dt">AggregateId</span> <span class="dt">Int</span></code></pre></div>
+<p>When a counter is created, we initialise its count to zero. We will increment a counter’s value by one for every <code>Incremented</code> event it receives:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">counterProjection ::</span> <span class="dt">Projection</span> <span class="dt">CounterProjectionState</span>
+counterProjection <span class="fu">=</span> <span class="dt">Projection</span> {
+  initProjection <span class="fu">=</span> Map.empty,
+  runProjection <span class="fu">=</span> runner
+} <span class="kw">where</span>
+ runner projectionData (<span class="dt">CounterCreated</span> counterId) _ <span class="fu">=</span> Map.insert counterId <span class="dv">0</span> projectionData
+ runner projectionData (<span class="dt">Incremented</span>) aggregateId <span class="fu">=</span> Map.adjust (<span class="fu">+</span> <span class="dv">1</span>) aggregateId projectionData</code></pre></div>
+<p>Not a rocket science at all! In more complex systems the projections could push data to a relational/document/graph or any other database as well so that queries could later use them for their specialised indexes - all while the write side is not blocked and is continuously accepting new commands.</p>
+<h2 id="queries">Queries</h2>
+<p>The purpose of queries is to serve the data to the client. There can be a few types of queries as well - a single HTTP request, or a socket, where the data is being continuously pushed to the client. And there can be different formats that clients accept. For the sake of simplicity I will only use HTTP queries, that send the result as JSON. Also, as queries are reading their data from the projections, the type we will define for queries is a single function, that accepts the projection data persistence channel, and results in a HTTP endpoint:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">Query</span> a <span class="fu">=</span> <span class="dt">ProjectionStatePersistence</span> a <span class="ot">-&gt;</span> <span class="dt">RouteAction</span></code></pre></div>
+<p>As we now have the query type, let’s define a simple query to retrieve all created counters.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">allCountersQuery ::</span> <span class="dt">Query</span> <span class="dt">AllCountersProjectionState</span>
+allCountersQuery persistence _ _ <span class="fu">=</span> <span class="kw">do</span>
+  counterStorage <span class="ot">&lt;-</span> readMVar persistence
+  return <span class="fu">.</span> sendPlainJson <span class="fu">.</span> getProjectionData <span class="fu">$</span> counterStorage</code></pre></div>
+<p>To serve the requested data, we read from the projection’s persistence, extract its data, and send it back as JSON.</p>
+<p>A slightly more complex query - to retrieve the counter value - will first try to find the requested counter in the projection’s data, extract the counter value from the <code>id -&gt; counter</code> map, and send it as JSON as well. To achieve the task we will first need to extract the requested counter identifier from the query parameters, and convert it to a valid <code>AggregateId</code> - both operations can fail (either the counter identifier is missing in the parameters, or it is not passed in a valid format) - to encode this, our <code>aggregateId</code> will use the <code>Maybe</code> monad we have seen before.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">counterQuery ::</span> <span class="dt">Query</span> <span class="dt">CounterProjectionState</span>
+counterQuery persistence params _ <span class="fu">=</span> <span class="kw">do</span>
+  storage <span class="ot">&lt;-</span> readMVar persistence
+  <span class="kw">case</span> aggregateId <span class="kw">of</span>
+    <span class="dt">Nothing</span> <span class="ot">-&gt;</span> return <span class="fu">$</span> send404 <span class="st">&quot;Aggregate not found (wrong id).\n&quot;</span>
+    <span class="dt">Just</span> aggId <span class="ot">-&gt;</span>
+        <span class="kw">case</span> Map.lookup aggId <span class="fu">$</span> getProjectionData storage <span class="kw">of</span>
+            <span class="dt">Nothing</span> <span class="ot">-&gt;</span> return <span class="fu">$</span> send404 <span class="st">&quot;Aggregate not found.\n&quot;</span>
+            <span class="dt">Just</span> counter <span class="ot">-&gt;</span> return <span class="fu">$</span> sendPlainJson counter
+  <span class="kw">where</span>
+<span class="ot">    aggregateId ::</span> <span class="dt">Maybe</span> <span class="dt">AggregateId</span>
+    aggregateId <span class="fu">=</span> aggregateIdFromString <span class="fu">=&lt;&lt;</span> Map.lookup <span class="st">&quot;id&quot;</span> params
+    send404 <span class="fu">=</span> responseLBS Http.status404 [(<span class="st">&quot;Content-Type&quot;</span>, <span class="st">&quot;text/plain&quot;</span>)]</code></pre></div>
+<p>Once we know that the <code>aggregateId</code> is not <code>Nothing</code>, we try to find the requested counter and returns its value as JSON.</p>
+<p>Of course, in more complex applications, it would be beneficial to separate the knowledge of HTTP and the domain. This would allow us to handle different output formats, or even different transports via composition and result in a more flexible solution.</p>
+<h1 id="infrastructure">Infrastructure</h1>
+<h2 id="persistence">Persistence</h2>
+<p>Persisting the data in an application is one of the factors that makes it useful. For simplicity, we will be storing the serialised event data to memory, without actually persisting to disk - this aspect would of course change in a real life application but for now let’s try to avoid the complexity.</p>
+<p>Let’s start with some types:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">Version</span> <span class="fu">=</span> <span class="dt">Int</span>
+<span class="kw">data</span> <span class="dt">VersionedEvents</span> <span class="fu">=</span> <span class="dt">VersionedEvents</span> <span class="dt">Version</span> (<span class="dt">Map.Map</span> <span class="dt">Version</span> <span class="dt">B.ByteString</span>)
+<span class="kw">type</span> <span class="dt">AggregateEvents</span> <span class="fu">=</span> <span class="dt">Map.Map</span> <span class="dt">AggregateId</span> <span class="dt">VersionedEvents</span>
+<span class="kw">type</span> <span class="dt">Persistence</span> <span class="fu">=</span> <span class="dt">MVar</span> <span class="dt">AggregateEvents</span></code></pre></div>
+<p>The events for aggregate are stored separately from each other - this way we are still able to manage the event storage on per aggregate/stream basis, following the structure of the <a href="https://geteventstore.com/">Event Store</a>. Also, the events for each aggregate have a version attached - each time a command is executed we’ll store the events for the given version in <code>VersionedEvents</code> and will update the top level version to the latest value.</p>
+<p>To initialise the persistence we simply need to construct a new variable in memory:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">initCounterPersistence ::</span> <span class="dt">IO</span> <span class="dt">Persistence</span>
+initCounterPersistence <span class="fu">=</span> newMVar Map.empty</code></pre></div>
+<p>To help us to use the new <code>VersionedEvents</code> type, let’s define a few functions for it:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">initVersionedEvents ::</span> <span class="dt">VersionedEvents</span>
+initVersionedEvents <span class="fu">=</span> <span class="dt">VersionedEvents</span> <span class="dv">0</span> Map.empty
+<span class="fu">&gt;</span>
+<span class="ot">getEventsVersion ::</span> <span class="dt">VersionedEvents</span> <span class="ot">-&gt;</span> <span class="dt">Version</span>
+getEventsVersion (<span class="dt">VersionedEvents</span> v _) <span class="fu">=</span> v
+<span class="fu">&gt;</span>
+<span class="ot">getEventsMap ::</span> <span class="dt">VersionedEvents</span> <span class="ot">-&gt;</span> <span class="dt">Map.Map</span> <span class="dt">Version</span> [<span class="dt">Event</span>]
+getEventsMap (<span class="dt">VersionedEvents</span> _ m) <span class="fu">=</span> Map.map (fromMaybe [] <span class="fu">.</span> decode) m
+<span class="fu">&gt;</span>
+<span class="ot">getEventsMapFromVersion ::</span> <span class="dt">VersionedEvents</span> <span class="ot">-&gt;</span> <span class="dt">Version</span> <span class="ot">-&gt;</span> <span class="dt">Map.Map</span> <span class="dt">Version</span> [<span class="dt">Event</span>]
+getEventsMapFromVersion (<span class="dt">VersionedEvents</span> _ m) v <span class="fu">=</span> Map.map (fromMaybe [] <span class="fu">.</span> decode) newEvents
+  <span class="kw">where</span>
+    (_, newEvents) <span class="fu">=</span> Map.split v m
+<span class="fu">&gt;</span>
+<span class="ot">addNewEventsVersion ::</span> <span class="dt">Version</span> <span class="ot">-&gt;</span> [<span class="dt">Event</span>] <span class="ot">-&gt;</span> <span class="dt">VersionedEvents</span> <span class="ot">-&gt;</span> <span class="dt">VersionedEvents</span>
+addNewEventsVersion v' e' (<span class="dt">VersionedEvents</span> _ e) <span class="fu">=</span> <span class="dt">VersionedEvents</span> v' <span class="fu">$</span> Map.insert v' (encode e') e</code></pre></div>
+<p>We initialise the versioned events to start from zero. Also, we create a function to retrieve the latest event version, and both full, and partial version to event maps. In case there was a failure decoding the list of events from the serialised data we will return an empty list for them.</p>
+<p>Please note, that in <code>addNewEventsVersion</code> and <code>getEventsMap*</code> functions we also manage the data serialisation - events are being converted to, and from JSON format using <code>encode</code> and <code>decode</code> functions from the Aeson library. To support such data translation we will need to declare that the types are instances of from JSON handling typeclasses:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">instance</span> <span class="dt">ToJSON</span> <span class="dt">AggregateId</span>
+<span class="kw">instance</span> <span class="dt">FromJSON</span> <span class="dt">AggregateId</span>
+<span class="kw">instance</span> <span class="dt">FromJSON</span> <span class="dt">Event</span>
+<span class="kw">instance</span> <span class="dt">ToJSON</span> <span class="dt">Event</span></code></pre></div>
+<p>Because the <code>AggregateId</code> and <code>Event</code> types are deriving the <code>Generic</code> typeclass, we can simply use the default JSON conversion functions for them.</p>
+<h2 id="command-handling">Command handling</h2>
+<p>The commands we have seen in previous paragraph take a list of past events, the input from the client and produce a list of new events. Simple! Or is there more to it?</p>
+<p>To implement such commands handlers we will need to define behaviour of some common, lower level command handling responsibilities: the past events need to be read from the persistence layer, and the results written back to it. If there are several commands invoked at the same time we will also need to deal with concurrency issues. These are exactly the topics I will talk about in this paragraph.</p>
+<p>The possible execution results of a particular command handler are as follows:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">data</span> <span class="dt">ExecutionState</span> <span class="fu">=</span> <span class="dt">CommandFailure</span> <span class="fu">|</span> <span class="dt">CommandSuccess</span> <span class="fu">|</span> <span class="dt">TransactionFailure</span> <span class="kw">deriving</span> (<span class="dt">Eq</span>, <span class="dt">Show</span>)</code></pre></div>
+<p>The command fails when it fails to validate the business rules it encodes, otherwise it succeeds. However, if a command is successful, it can still result in a failure. Let’s say we have two commands, running at the same time. When the first command succeeds, but the second command is executed and persisted just before the results of the first command could be stored, we need to check the validation rules of the first command again, and the current results of it are rendered invalid. Such state is called a failed transaction. One way to deal with transaction failures is <a href="http://c2.com/cgi/wiki?OptimisticLocking">optimistic concurrency control</a> - we will retry the command up to a specified amount of times, passing the new events to it.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">commandRetryCount ::</span> <span class="dt">Int</span>
+commandRetryCount <span class="fu">=</span> <span class="dv">10</span></code></pre></div>
+<p>This will most likely solve the problem, especially if the failures are rare, however it does not guarantee that the user will not see a failure given enough concurrent commands that are affecting the same aggregate.</p>
+<p>Another responsibility of handling a command is that when a command has been executed, and the results successfully stored, it would need to notify the event listeners about the new changes. To allow such functionality we’ll use non-blocking channel with a defined message type:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">data</span> <span class="dt">NewEventMessage</span> <span class="fu">=</span> <span class="dt">NewEventMessage</span> <span class="dt">AggregateId</span> <span class="dt">Version</span> <span class="kw">deriving</span> (<span class="dt">Show</span>, <span class="dt">Eq</span>)</code></pre></div>
+<p>We are now ready to look at running the command handlers:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">commandRunner ::</span> <span class="dt">CommandHandler</span> <span class="ot">-&gt;</span> <span class="dt">Persistence</span> <span class="ot">-&gt;</span> <span class="dt">Chan</span> <span class="dt">NewEventMessage</span> <span class="ot">-&gt;</span> <span class="dt">RouteAction</span>
+commandRunner handler persistence eventChan params _ <span class="fu">=</span> <span class="kw">do</span>
+  ret <span class="ot">&lt;-</span> retryTransactionFailures commandRetryCount execute
+  <span class="kw">case</span> ret <span class="kw">of</span>
+    <span class="dt">CommandFailure</span> <span class="ot">-&gt;</span> return renderCommandFailure
+    <span class="dt">CommandSuccess</span> <span class="ot">-&gt;</span> return renderSuccess
+    <span class="dt">TransactionFailure</span> <span class="ot">-&gt;</span> return renderTransactionFailure
+  <span class="kw">where</span></code></pre></div>
+<p>… running a command handler starts with stating that we will retry the <code>execute</code> function up to <code>commandRetryCount</code> times and will route the result to an appropriate rendering function. When executing, we will take the <code>id</code> parameter from the request, convert it to the <code>AggregateId</code> and continue to <code>executeOnAggregate</code>.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    execute <span class="fu">=</span> <span class="kw">do</span>
+        <span class="kw">let</span> aggregateId <span class="fu">=</span> aggregateIdFromString <span class="fu">=&lt;&lt;</span> Map.lookup <span class="st">&quot;id&quot;</span> params
+        <span class="kw">case</span> aggregateId <span class="kw">of</span>
+            <span class="dt">Just</span> aggId <span class="ot">-&gt;</span> executeOnAggregate aggId
+            <span class="dt">Nothing</span> <span class="ot">-&gt;</span> return <span class="dt">CommandFailure</span></code></pre></div>
+<p><code>executeOnAggregate</code> loads the event history for a particular aggregate, applies the command handler logic, and stores the new events if the command has been successful:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    executeOnAggregate aggId <span class="fu">=</span> <span class="kw">do</span>
+        versionedEvents <span class="ot">&lt;-</span> loadEventStorage aggId
+        <span class="kw">case</span> handler (eventList versionedEvents) params <span class="kw">of</span>
+            <span class="dt">Just</span> events' <span class="ot">-&gt;</span> storeNewEvents aggId versionedEvents events' (notifyListeners aggId)
+            <span class="dt">Nothing</span> <span class="ot">-&gt;</span> return <span class="dt">CommandFailure</span>
+    eventList <span class="fu">=</span> concat <span class="fu">.</span> Map.elems <span class="fu">.</span> getEventsMap</code></pre></div>
+<p>As we are currently using the in-memory data store, loading the events from their persistence variable is trivial:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    loadEventStorage aggId <span class="fu">=</span> <span class="kw">do</span>
+        storage <span class="ot">&lt;-</span> readMVar persistence
+        return <span class="fu">$</span> eventsForAggregate aggId storage
+    eventsForAggregate <span class="fu">=</span> Map.findWithDefault initVersionedEvents</code></pre></div>
+<p>However, when we are storing the events, we are also incrementing the event version, so that we can check later if there were no version conflicts from other commands:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    storeNewEvents aggId versionedEvents events' onSuccess <span class="fu">=</span> <span class="kw">do</span>
+        <span class="kw">let</span> version' <span class="fu">=</span> getEventsVersion versionedEvents <span class="fu">+</span> <span class="dv">1</span>
+            versionedEvents' <span class="fu">=</span> addNewEventsVersion version' events' versionedEvents
+        result <span class="ot">&lt;-</span> modifyMVar persistence <span class="fu">$</span> verifyAddToAggregate aggId version' versionedEvents'
+        when (result <span class="fu">==</span> <span class="dt">CommandSuccess</span>) <span class="fu">$</span> onSuccess version'
+        return result</code></pre></div>
+<p><code>verifyAddToAggregate</code> is the exact place where the optimistic locking is implemented - it is executed atomically within <code>modifyMVar</code> environment, so it is guaranteed, that no parallel check/event storing will be running at the same time. If the latest event version for the current aggregate is less than the currently added one, no one else has modified the events stream after our initial read and it is safe to update the data store with the new data. If the events version in the data store is same is greater than the version that is being added - there is a transaction failure and we do not modify the existing events:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">    verifyAddToAggregate ::</span> <span class="dt">AggregateId</span> <span class="ot">-&gt;</span> <span class="dt">Version</span> <span class="ot">-&gt;</span> <span class="dt">VersionedEvents</span> <span class="ot">-&gt;</span> <span class="dt">AggregateEvents</span> <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">AggregateEvents</span>, <span class="dt">ExecutionState</span>)
+    verifyAddToAggregate aId version' events' storage <span class="fu">=</span> <span class="kw">do</span>
+      <span class="kw">let</span> canChange <span class="fu">=</span> (<span class="fu">&lt;</span> version') <span class="fu">.</span> getEventsVersion <span class="fu">$</span> eventsForAggregate aId storage
+      return <span class="fu">$</span> <span class="kw">if</span> canChange <span class="kw">then</span> (Map.insert aId events' storage, <span class="dt">CommandSuccess</span>)
+                            <span class="kw">else</span> (storage, <span class="dt">TransactionFailure</span>)</code></pre></div>
+<p>To notify the successful command listeners, we simply send a new event message - this function has been used as the <code>onSuccess</code> handler for the <code>storeNewEvents</code>:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    notifyListeners aggId version <span class="fu">=</span> writeChan eventChan <span class="fu">$</span> <span class="dt">NewEventMessage</span> aggId version</code></pre></div>
+<p>While retrying a command could be written in pattern matching style, we will defensively use guards syntax in the next function in case the parameter <code>c</code> is negative. The function simply repeats the given command if it results in a <code>TransactionFailure</code> up to <code>c</code> times:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    retryTransactionFailures c command
+      <span class="fu">|</span> c <span class="fu">&gt;</span> <span class="dv">0</span> <span class="fu">=</span> <span class="kw">do</span>
+          ret <span class="ot">&lt;-</span> command
+          <span class="kw">if</span> ret <span class="fu">==</span> <span class="dt">TransactionFailure</span>
+            <span class="kw">then</span> retryTransactionFailures (c <span class="fu">-</span> <span class="dv">1</span>) command
+            <span class="kw">else</span> return ret
+      <span class="fu">|</span> otherwise  <span class="fu">=</span> return <span class="dt">TransactionFailure</span></code></pre></div>
+<p>The HTTP responses for the different command results:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    renderCommandFailure <span class="fu">=</span> responseLBS Http.status403 [(<span class="st">&quot;Content-Type&quot;</span>, <span class="st">&quot;text/plain&quot;</span>)] <span class="st">&quot;Command validation failed.\n&quot;</span>
+    renderSuccess <span class="fu">=</span> responseLBS Http.status200 [(<span class="st">&quot;Content-Type&quot;</span>, <span class="st">&quot;text/plain&quot;</span>)] <span class="st">&quot;Applied.\n&quot;</span>
+    renderTransactionFailure <span class="fu">=</span> responseLBS Http.status409 [(<span class="st">&quot;Content-Type&quot;</span>, <span class="st">&quot;text/plain&quot;</span>)] <span class="st">&quot;Transaction validation failed. Please retry.\n&quot;</span></code></pre></div>
+<h2 id="running-projections">Running projections</h2>
+<p>Projections track the event streams that are produced by commands, and update their internal <em>projected</em> state according to the use case. To support such functionality we start by defining suitable data types for the projection structure:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">EventStreamPositions</span> <span class="fu">=</span> <span class="dt">Map.Map</span> <span class="dt">AggregateId</span> <span class="dt">Version</span>
+<span class="kw">data</span> <span class="dt">ProjectionRunnerInfo</span> a <span class="fu">=</span> <span class="dt">ProjectionRunnerInfo</span> <span class="dt">EventStreamPositions</span> a
+<span class="kw">type</span> <span class="dt">ProjectionStatePersistence</span> a <span class="fu">=</span> <span class="dt">MVar</span> (<span class="dt">ProjectionRunnerInfo</span> a)
+<span class="fu">&gt;</span>
+<span class="ot">initProjectionPersistence ::</span> <span class="dt">Projection</span> a <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">ProjectionStatePersistence</span> a)
+initProjectionPersistence p <span class="fu">=</span> newMVar (<span class="dt">ProjectionRunnerInfo</span> Map.empty <span class="fu">$</span> initProjection p)</code></pre></div>
+<p>Projections, as the systems events, will be persisted only to the in-memory variable. We also allow flexibility to define custom data type for the projection’s data. What’s more - each projection will have its own tracking state for the event streams - <code>EventStreamPositions</code> tells us what version for a particular stream the projection has been already caught up with.</p>
+<p>To run a projection, we define a type for its process - which has access to the events persistence, projection data store, means to receive updates when there are new events in the system, and the projection itself:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">ProjectionRunner</span> a <span class="fu">=</span> <span class="dt">Persistence</span> <span class="ot">-&gt;</span> <span class="dt">ProjectionStatePersistence</span> a <span class="ot">-&gt;</span> <span class="dt">Chan</span> <span class="dt">NewEventMessage</span> <span class="ot">-&gt;</span> <span class="dt">Projection</span> a <span class="ot">-&gt;</span> <span class="dt">IO</span> ()</code></pre></div>
+<p>Once we have the projection’s runner type, its rather easy to define the runner itself. It only has to do two things - run the projection for all past events until the current moment, and then start listening for new system events and update its state continuously:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">projectionRunner ::</span> <span class="dt">ProjectionRunner</span> a
+projectionRunner persistence projectionStatePersistence newEventsNotifier projection <span class="fu">=</span> <span class="kw">do</span>
+  catchUpProjection
+  listenForNewEvents
+  <span class="kw">where</span></code></pre></div>
+<p>Catching the projection up with the past events needs to end up updating the projection’s state having folded the projection’s update function through all events that have happened in the system.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    catchUpProjection <span class="fu">=</span> <span class="kw">do</span>
+      storage <span class="ot">&lt;-</span> readMVar persistence
+      modifyPersistence (\initialState <span class="ot">-&gt;</span> return <span class="fu">$</span> Map.foldlWithKey runProjectionForAggregate initialState storage)</code></pre></div>
+<p>Because we know that the structure of the <code>storage</code> variable is a map of <code>aggregateId</code> to its versioned events, we can fold through the aggregates first passing all aggregate events to the projection runner. Please note, that such fold does not preserve the order of system events that happened in separate aggregates, and may cause troubles - if there were different expectations by the projection’s function. However, having in mind that an aggregate <em>is the consistency boundary</em> such behaviour does not violate CQRS/ES principles.</p>
+<p>Once the projection is up to date with the state of all aggregates, it switches to the ‘listening’ mode. The <code>readChan newEventsNotifier</code> will block until there is a message sent to the projection runner and once it is received - the particular aggregate will be updated.</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    listenForNewEvents <span class="fu">=</span> <span class="kw">do</span>
+      (<span class="dt">NewEventMessage</span> aggregateId _) <span class="ot">&lt;-</span> readChan newEventsNotifier
+      updateForAggregate aggregateId
+      listenForNewEvents</code></pre></div>
+<p>Updating a single aggregate will have to read the events happened to it and run them through the projection function:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    updateForAggregate aggregateId <span class="fu">=</span> <span class="kw">do</span>
+      storage <span class="ot">&lt;-</span> readMVar persistence
+      <span class="kw">case</span> Map.lookup aggregateId storage <span class="kw">of</span>
+        <span class="dt">Just</span> events <span class="ot">-&gt;</span> modifyPersistence (\state <span class="ot">-&gt;</span> return <span class="fu">$</span> runProjectionForAggregate state aggregateId events)
+        <span class="dt">Nothing</span> <span class="ot">-&gt;</span> return ()</code></pre></div>
+<p>Modifying projection’s persistence is simply an alias for the full <code>MVar</code> modification function:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    modifyPersistence <span class="fu">=</span> modifyMVar_ projectionStatePersistence</code></pre></div>
+<p>Finally, running a projection for an aggregate, that is used in both the catchup and listening phases, will fold the projection’s function for all new events since the last update:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">    runProjectionForAggregate (<span class="dt">ProjectionRunnerInfo</span> streamPositions projectionData) aggregateId allEvents <span class="fu">=</span> <span class="dt">ProjectionRunnerInfo</span> streamPositions' projectionData'
+        <span class="kw">where</span>
+          v <span class="fu">=</span> Map.findWithDefault <span class="dv">0</span> aggregateId streamPositions
+          newEvents <span class="fu">=</span> concat <span class="fu">.</span> Map.elems <span class="fu">$</span> getEventsMapFromVersion allEvents v
+          v' <span class="fu">=</span> getEventsVersion allEvents
+          streamPositions' <span class="fu">=</span> Map.insert aggregateId v' streamPositions
+          projectionData' <span class="fu">=</span> foldl (\pdata event <span class="ot">-&gt;</span> runProjection projection pdata event aggregateId) projectionData newEvents</code></pre></div>
+<p>We take the current projection version (<code>v</code>) from the <code>streamPositions</code> for the aggregate, or start with zero. Then, we collect all events that have happened from the version <code>v</code> as a single list <code>newEvents</code>. Once we have the mentioned definitions, we can now express the fold through the new events, modifying the <code>projectionData</code> (<code>pdata</code> in the fold’s lambda) which is part of our result value for the new <code>ProjectionRunnerInfo</code>.</p>
+<p>The final bit related to the projections is to define how queries will be able to access its state - as queries usually don’t need to know about the version of the projection they are querying:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">getProjectionData ::</span> <span class="dt">ProjectionRunnerInfo</span> a <span class="ot">-&gt;</span> a
+getProjectionData (<span class="dt">ProjectionRunnerInfo</span> _ d) <span class="fu">=</span> d</code></pre></div>
+<h2 id="http-api">Http api</h2>
+<p>We now have all major elements for CQRS/ES application defined, but to complete the picture, lets see how we can actually use them. For this, we need to wrap them in some kind of an interaction layer, where the user of the system can send commands to and receive the results. As an example, I have used a simple HTTP server, listening on <code>http://localhost:3000/</code>.</p>
+<p>As before, lets start with a few types we are going to use:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="kw">type</span> <span class="dt">RequestPath</span> <span class="fu">=</span> [<span class="dt">T.Text</span>]
+<span class="kw">type</span> <span class="dt">RouteMatcherConfig</span> <span class="fu">=</span> [<span class="dt">String</span>]
+<span class="kw">type</span> <span class="dt">RouteParameter</span> <span class="fu">=</span> <span class="dt">String</span>
+<span class="kw">type</span> <span class="dt">RouteParameterValue</span> <span class="fu">=</span> <span class="dt">String</span>
+<span class="kw">type</span> <span class="dt">RouteParameters</span> <span class="fu">=</span> <span class="dt">Map.Map</span> <span class="dt">RouteParameter</span> <span class="dt">RouteParameterValue</span>
+<span class="kw">type</span> <span class="dt">RouteMatcher</span> <span class="fu">=</span> <span class="dt">Http.Method</span> <span class="ot">-&gt;</span> <span class="dt">RequestPath</span> <span class="ot">-&gt;</span> <span class="dt">Maybe</span> (<span class="dt">Request</span> <span class="ot">-&gt;</span> <span class="dt">IO</span> <span class="dt">W.Response</span>)
+<span class="kw">type</span> <span class="dt">RouteAction</span> <span class="fu">=</span> <span class="dt">RouteParameters</span> <span class="ot">-&gt;</span> <span class="dt">Request</span> <span class="ot">-&gt;</span> <span class="dt">IO</span> <span class="dt">W.Response</span></code></pre></div>
+<p>The most notable types are the <code>RouteParameters</code>, which collect route info and pass to the commands/queries, and the <code>RouteAction</code>, which is a type of both the command runner and the system queries.</p>
+<p>We want to use custom routing which can extract <code>RouteParameters</code> for the custom <code>RouteActions</code>. Let’s start by defining the route matcher. It is configured with the route description and produces a route if the request metches the configured route format:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">matchRoute ::</span> <span class="dt">Http.Method</span> <span class="ot">-&gt;</span> <span class="dt">RouteMatcherConfig</span> <span class="ot">-&gt;</span> <span class="dt">RouteAction</span> <span class="ot">-&gt;</span> <span class="dt">RouteMatcher</span>
+matchRoute method config action currentMethod requestPath
+ <span class="fu">|</span> method <span class="fu">==</span> currentMethod <span class="fu">=</span> (action <span class="fu">.</span> Map.fromList) <span class="fu">&lt;$&gt;</span> matchConfiguredRoute config (map T.unpack requestPath) []
+ <span class="fu">|</span> otherwise <span class="fu">=</span> <span class="dt">Nothing</span>
+  <span class="kw">where</span></code></pre></div>
+<p>For those new to Haskell, <code>&lt;$&gt;</code> means an <code>fmap</code> as an infix - if the <code>matchConfiguredRoute</code> returns <code>Nothing</code>, then the result of the whole function will be <code>Nothing</code>, otherwise - <code>Just x</code> will be converted to <code>Just (action (Map.fromList x))</code>.</p>
+<p>Matching a route configuration is a recursive function, which also collects parameter values, if the route config starts with the <code>':'</code> character:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">    matchConfiguredRoute ::</span> [<span class="dt">String</span>] <span class="ot">-&gt;</span> [<span class="dt">String</span>] <span class="ot">-&gt;</span> [(<span class="dt">String</span>, <span class="dt">String</span>)] <span class="ot">-&gt;</span> <span class="dt">Maybe</span> [(<span class="dt">String</span>, <span class="dt">String</span>)]
+    matchConfiguredRoute (c<span class="fu">:</span>cs) (rp<span class="fu">:</span>rps) params
+      <span class="fu">|</span> listToMaybe c <span class="fu">==</span> <span class="dt">Just</span> <span class="ch">':'</span> <span class="fu">=</span> matchConfiguredRoute cs rps (params<span class="fu">++</span>[(tail c, rp)])
+      <span class="fu">|</span> c <span class="fu">==</span> rp <span class="fu">=</span> matchConfiguredRoute cs rps params
+      <span class="fu">|</span> otherwise <span class="fu">=</span> <span class="dt">Nothing</span>
+    matchConfiguredRoute [] [] params <span class="fu">=</span> <span class="dt">Just</span> params
+    matchConfiguredRoute _ _ _ <span class="fu">=</span> <span class="dt">Nothing</span></code></pre></div>
+<p>Routing a request will find a matching route by trying all matchers in sequence, until it finds one the does not result in <code>Nothing</code>:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">routeRequest ::</span> [<span class="dt">RouteMatcher</span>] <span class="ot">-&gt;</span> <span class="dt">Request</span> <span class="ot">-&gt;</span> <span class="dt">Maybe</span> (<span class="dt">IO</span> <span class="dt">W.Response</span>)
+routeRequest matchers request <span class="fu">=</span> fmap (\requestAction <span class="ot">-&gt;</span> requestAction request) <span class="fu">.</span> matchingRoute <span class="fu">$</span> matchers
+  <span class="kw">where</span>
+    currentMethod <span class="fu">=</span> requestMethod request
+    currentPathInfo <span class="fu">=</span> pathInfo request
+    applyMatcher matcher <span class="fu">=</span> matcher currentMethod currentPathInfo
+    matchingRoute <span class="fu">=</span> listOfMaybeToMaybe <span class="fu">.</span> take <span class="dv">1</span> <span class="fu">.</span> dropWhile isNothing <span class="fu">.</span> map applyMatcher
+    listOfMaybeToMaybe <span class="fu">=</span> fromMaybe <span class="dt">Nothing</span> <span class="fu">.</span> listToMaybe</code></pre></div>
+<p>A few functions for convenience of handling JSON output:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">sendJson ::</span> <span class="dt">ToJSON</span> s <span class="ot">=&gt;</span> <span class="dt">Http.Status</span> <span class="ot">-&gt;</span> [<span class="dt">Http.Header</span>] <span class="ot">-&gt;</span> s <span class="ot">-&gt;</span> <span class="dt">Response</span>
+sendJson status headers dat <span class="fu">=</span> responseLBS status (headers<span class="fu">++</span>[jsonHeader]) <span class="fu">$</span> encode dat
+  <span class="kw">where</span>
+    jsonHeader <span class="fu">=</span> (<span class="st">&quot;Content-Type&quot;</span>, <span class="st">&quot;application/json&quot;</span>)
+<span class="fu">&gt;</span>
+<span class="ot">sendPlainJson ::</span> <span class="dt">ToJSON</span> s <span class="ot">=&gt;</span> s <span class="ot">-&gt;</span> <span class="dt">Response</span>
+sendPlainJson <span class="fu">=</span> sendJson Http.status200 []</code></pre></div>
+<p>Once we have the routing mechanism defined, we can express the main web application that uses it:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">application ::</span> (t <span class="ot">-&gt;</span> <span class="dt">Maybe</span> (<span class="dt">IO</span> <span class="dt">Response</span>)) <span class="ot">-&gt;</span> t <span class="ot">-&gt;</span> (<span class="dt">Response</span> <span class="ot">-&gt;</span> <span class="dt">IO</span> b) <span class="ot">-&gt;</span> <span class="dt">IO</span> b
+application route request respond <span class="fu">=</span> <span class="kw">do</span>
+  response <span class="ot">&lt;-</span> <span class="dt">Traversable</span><span class="fu">.</span>sequence <span class="fu">$</span> route request
+  <span class="kw">case</span> response <span class="kw">of</span>
+    <span class="dt">Just</span> r <span class="ot">-&gt;</span> respond r
+    <span class="dt">Nothing</span> <span class="ot">-&gt;</span> respond <span class="fu">$</span> responseLBS Http.status404 [(<span class="st">&quot;Content-Type&quot;</span>, <span class="st">&quot;text/plain&quot;</span>)] <span class="st">&quot;Unsupported request.&quot;</span></code></pre></div>
+<p>Please note that the routing can fail resulting in <code>Nothing</code> - thus we use <code>Traversable.sequence</code> to handle the request in a functor-ish manner (whilst still staying in the IO monad).</p>
+<p>The final bit of our example is to wire everything up and produce a working application. The <code>main</code> function is as follows:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="ot">main ::</span> <span class="dt">IO</span> ()
+main <span class="fu">=</span> <span class="kw">do</span></code></pre></div>
+<p>The event channel that will be used to notify projections when there are new events stored:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">  eventChan <span class="ot">&lt;-</span> newChan</code></pre></div>
+<p>The main aggregate persistence:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">  counterPersistence <span class="ot">&lt;-</span> initCounterPersistence</code></pre></div>
+<p>Let’s start our first projection, as a forked process:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">  counterProjectionPersistence <span class="ot">&lt;-</span> initProjectionPersistence counterProjection
+  _ <span class="ot">&lt;-</span> forkIO <span class="fu">$</span> projectionRunner counterPersistence counterProjectionPersistence eventChan counterProjection</code></pre></div>
+<p>We’ll run another projection, thus we need to duplicate the channel so it acts like a <a href="http://hackage.haskell.org/package/base-4.8.0.0/docs/Control-Concurrent-Chan.html#v:dupChan">broadcast</a> for new event messages:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">  eventChan2 <span class="ot">&lt;-</span> dupChan eventChan
+  allCountersProjectionPersistence <span class="ot">&lt;-</span> initProjectionPersistence allCountersProjection
+  _ <span class="ot">&lt;-</span> forkIO <span class="fu">$</span> projectionRunner counterPersistence allCountersProjectionPersistence eventChan2 allCountersProjection</code></pre></div>
+<p>Finally, let’s start the HTTP listener:</p>
+<div class="sourceCode"><pre class="sourceCode haskell"><code class="sourceCode haskell">  <span class="kw">let</span> configuredRouteRequest <span class="fu">=</span> routeRequest (routeConfig eventChan counterPersistence counterProjectionPersistence allCountersProjectionPersistence)
+  run <span class="dv">3000</span> (application configuredRouteRequest)
+  <span class="kw">where</span>
+    routeConfig eventChan counterPersistence counterProjectionPersistence allCountersProjectionPersistence <span class="fu">=</span>
+      [ matchRoute Http.methodGet [<span class="st">&quot;list&quot;</span>] (allCountersQuery allCountersProjectionPersistence)
+      , matchRoute Http.methodGet [<span class="st">&quot;:id&quot;</span>] (counterQuery counterProjectionPersistence)
+      , matchRoute Http.methodPost [<span class="st">&quot;create&quot;</span>, <span class="st">&quot;:id&quot;</span>] (commandRunner createCounterHandler counterPersistence eventChan)
+      , matchRoute Http.methodPost [<span class="st">&quot;:id&quot;</span>] (commandRunner incHandler counterPersistence eventChan)
+      ]</code></pre></div>
+<p>That’s it! the application can be now executed, and we can use HTTP to run the defined commands and queries:</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash">$ <span class="kw">curl</span> -X POST http://localhost:3000/create/my-counter
+<span class="kw">Applied.</span>
+
+$ <span class="kw">curl</span> http://localhost:3000/my-counter
+<span class="kw">0</span>
+
+$ <span class="kw">curl</span> -X POST http://localhost:3000/my-counter
+<span class="kw">Applied.</span>
+
+$ <span class="kw">curl</span> http://localhost:3000/my-counter
+<span class="kw">1</span>
+
+$ <span class="kw">curl</span> -X POST http://localhost:3000/my-counter
+<span class="kw">Applied.</span>
+
+$ <span class="kw">curl</span> http://localhost:3000/my-counter
+<span class="kw">2</span></code></pre></div>
+<p>It is also worth to mention, that in this example, some of the HTTP API types have still leaked to the command runner and the queries. A real life application would add a translation layer that defines how the command/query IO is defined. This way it would be even more flexible and unrestricted by choice of the transport layer.</p>
+<h1 id="summary-and-future-work">Summary and future work</h1>
+<p>We have built a very simple, yet fully functional named counters application - which we have split into two main parts: the <em>Domain</em> - where the business logic resides, and the <em>Infrastructure</em> - a subsystem allowing the Domain logic to be executed. When growing a software system, we start by the events, aggregates and the use cases in the domain, reusing much of the Infrastructure code from the previous projects. This allows us to cut the costs by a substantial factor, as the Infrastructure part is where a large part of costs usually hides - scaling processes, synchronising and persisting data, defining communication protocols and more. With Event Sourcing, we not only know the state of the system but how it got to it as well - debugging and error recovery was never easier!</p>
+<p>Of course, this article has only shown a very simple CQRS/ES application - there are plenty of possilities to improve it, for example:</p>
+<ul>
+<li>persist events to disk</li>
+<li>command preprocessor - to authenticate, enrich and translate commands between different versions</li>
+<li>allow projections to emit events</li>
+<li>implement a more flexible subsciption model for projections to listen to specific aggregates, or aggregate types</li>
+<li>when initialising projection, order events by their time, not aggregate</li>
+<li>implement different projection backends for specialised access - using key value, relational, graph or other databases</li>
+<li>different backends for queries - e.g. allowing push based notification (e.g. sockets) to clients</li>
+<li>implement process for <a href="http://blog.jonathanoliver.com/cqrs-sagas-with-event-sourcing-part-i-of-ii/">sagas</a></li>
+</ul>
+<p>Some of the items in the list have been inspired by the <a href="http://geteventstore.com/">Event Store</a> and it could be used instead of implementing the features from scratch.</p>
+<p>I hope the article has been useful to you - let me know! And if you have found an error to fix or an improvement to be made - I would appreciate your feedback!</p>
+
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+    /* * * CONFIGURATION VARIABLES * * */
+    var disqus_shortname = 'hyperlambda';
+
+    /* * * DON'T EDIT BELOW THIS LINE * * */
+    (function() {
+        var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+        dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+        (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript" rel="nofollow">comments powered by Disqus.</a></noscript>
+
+        </div>
+        <div id="footer">
+            I'm using <a href="http://jaspervdj.be/hakyll">Hakyll</a>!
+        </div>
+        <script>
+         (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+             (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+                                  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+         })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+         ga('create', 'UA-64681045-1', 'auto');
+         ga('send', 'pageview');
+
+        </script>
+    </body>
+</html>

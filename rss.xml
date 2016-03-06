@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>Hyper Lambda</title>
+        <link>http://www.hyperlambda.com</link>
+        <description>All things functional</description>
+        <atom:link href="http://www.hyperlambda.com/rss.xml" rel="self" type="application/rss+xml"></atom:link>
+        <lastBuildDate>Sun, 06 Mar 2016 00:00:00 UT</lastBuildDate>
+        <item>
+    <title>Eventflow: just got even prettier!</title>
+    <link>http://www.hyperlambda.com/posts/eventflow-just-got-even-prettier/</link>
+    <description><html><body>Last time in the eventflow series we’ve seen how to define a bit more complex example. However, the example, while being functionally correct, has started to show that systems can still seem more complex than they should be. This time, we’ll see a new addition to the eventflow - a custom DSL, that makes defining an aggregate a breeze! The</description>
+    <pubDate>Sun, 06 Mar 2016 00:00:00 UT</pubDate>
+    <guid>http://www.hyperlambda.com/posts/eventflow-just-got-even-prettier/</guid>
+    <dc:creator>Sarunas Valaskevicius</dc:creator>
+</item>
+<item>
+    <title>Eventflow: a more complex example</title>
+    <link>http://www.hyperlambda.com/posts/eventflow-more-complex-example/</link>
+    <description><html><body>Last time we’ve seen an example of a simple aggregate defined as an <em>Eventflow</em>. We’ve created a simple counter, that can be incremented and decremented, but it cannot be decremented below zero. All it needed was a local state for the counter value and an ability to fail a command. This time we’ll define just a little bit more complex</description>
+    <pubDate>Fri, 16 Oct 2015 00:00:00 UT</pubDate>
+    <guid>http://www.hyperlambda.com/posts/eventflow-more-complex-example/</guid>
+    <dc:creator>Sarunas Valaskevicius</dc:creator>
+</item>
+<item>
+    <title>Scala implicits: creating an HList that can be mapped over</title>
+    <link>http://www.hyperlambda.com/posts/hlist-map-in-scala/</link>
+    <description><html><body> Why? One of the main features of Scala are implicits. They add the power to create type classes in a similar way to Haskell. However, as much as they are useful, they are also somewhat complex to grok. When is an implicit passed? What if there are a few matches available? Where does scala look for them? To get</description>
+    <pubDate>Sun, 11 Oct 2015 00:00:00 UT</pubDate>
+    <guid>http://www.hyperlambda.com/posts/hlist-map-in-scala/</guid>
+    <dc:creator>Sarunas Valaskevicius</dc:creator>
+</item>
+<item>
+    <title>Eventflow: a functional approach to aggregates</title>
+    <link>http://www.hyperlambda.com/posts/eventflow-cqrs-es-in-scala/</link>
+    <description><html><body> Modelling an aggregate An aggregate in a DDD system defines a consistency boundary for the entities it describes. Usually, this is implemented as a set of entities, where one of them is denoted as the aggregate root. To the outside world, this aggregate root is more or less a black box. No entity below the aggregate root can be</description>
+    <pubDate>Tue, 25 Aug 2015 00:00:00 UT</pubDate>
+    <guid>http://www.hyperlambda.com/posts/eventflow-cqrs-es-in-scala/</guid>
+    <dc:creator>Sarunas Valaskevicius</dc:creator>
+</item>
+<item>
+    <title>CQRS/ES in Scala: an overview</title>
+    <link>http://www.hyperlambda.com/posts/cqrs-es-in-scala/</link>
+    <description><html><body> Where are we now? Last time we’ve looked at implementing a CQRS/ES application in Haskell - a purely functional programming language. This gave us some insights of how we can compose the elements together. Today we’re going to look at some existing CQRS/ES examples in Scala. CQRS with Akka actors and functional domain models (01/2011) This is one of</description>
+    <pubDate>Sat, 11 Jul 2015 00:00:00 UT</pubDate>
+    <guid>http://www.hyperlambda.com/posts/cqrs-es-in-scala/</guid>
+    <dc:creator>Sarunas Valaskevicius</dc:creator>
+</item>
+<item>
+    <title>Eventflow: CQRS/ES in Haskell</title>
+    <link>http://www.hyperlambda.com/posts/cqrs-es-in-haskell/</link>
+    <description><html><body> What is it all about? CQRS is not a new architectural pattern. And it is used more and more in complex applications, that require a highly scalable infrastructure. The main principle of CQRS is based on CQS - the Command Query Separation principle. It states that a method in object oriented paradigm must by either a command or a</description>
+    <pubDate>Sat, 04 Jul 2015 00:00:00 UT</pubDate>
+    <guid>http://www.hyperlambda.com/posts/cqrs-es-in-haskell/</guid>
+    <dc:creator>Sarunas Valaskevicius</dc:creator>
+</item>
+<item>
+    <title>Baby's first steps</title>
+    <link>http://www.hyperlambda.com/posts/hello/</link>
+    <description><html><body>First post after a long break. <em>Hello!</em> Said the hedgehog to the void. And smiled. I hope you’ll enjoy your stay here!</body></html></description>
+    <pubDate>Wed, 01 Jul 2015 00:00:00 UT</pubDate>
+    <guid>http://www.hyperlambda.com/posts/hello/</guid>
+    <dc:creator>Sarunas Valaskevicius</dc:creator>
+</item>
+
+    </channel>
+</rss>

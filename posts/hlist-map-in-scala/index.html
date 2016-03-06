@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <title>Hyper Lambda - Scala implicits: creating an HList that can be mapped over</title>
+        <link rel="stylesheet" type="text/css" href="../../css/main.css" />
+        <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Merriweather:300,300italic,700|Source+Code+Pro" />
+        <link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.hyperlambda.com/rss.xml" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body>
+        <div id="header">
+            <div id="logo">
+                <a href="../../">hyper λ</a>
+            </div>
+            <div id="navigation">
+                <a href="../../archive.html">Archive</a>
+            </div>
+        </div>
+
+        <div id="content">
+            <h1>Scala implicits: creating an HList that can be mapped over</h1>
+
+            <div class="info">
+    Posted on October 11, 2015
+    
+        by Sarunas Valaskevicius
+    
+</div>
+
+<div id="toc"><ul>
+<li><a href="#why">Why?</a></li>
+<li><a href="#what-is-an-hlist">What is an HList?</a></li>
+<li><a href="#mapping-over-an-hlist">Mapping over an HList</a></li>
+<li><a href="#results">Results</a></li>
+</ul></div>
+<h1 id="why">Why?</h1>
+<p>One of the main features of Scala are implicits. They add the power to create type classes in a similar way to Haskell. However, as much as they are useful, they are also somewhat complex to grok.</p>
+<p>When is an implicit passed? What if there are a few matches available? Where does scala look for them?</p>
+<p>To get a better understanding I’ve spent some time re-creating an <code>HList</code> functionality.</p>
+<h1 id="what-is-an-hlist">What is an HList?</h1>
+<p>An HList, or a heterogenous list, records elements of different types. These types are known at compile time, and all operations are fully type-checked in this phase.</p>
+<p>To start with, let’s write its definition down:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">sealed</span> <span class="kw">trait</span> HList
+
+<span class="kw">final</span> <span class="kw">case</span> <span class="kw">class</span> HCons[H, T &lt;: HList](head : H, tail : T) <span class="kw">extends</span> HList {
+    <span class="kw">def</span> ::[A](v : A) = <span class="fu">HCons</span>(v, <span class="kw">this</span>)
+}
+
+<span class="kw">trait</span> HNil <span class="kw">extends</span> HList
+<span class="kw">object</span> HNil <span class="kw">extends</span> HNil {
+    <span class="kw">def</span> ::[T](v : T) = <span class="fu">HCons</span>(v, <span class="kw">this</span>)
+}
+
+<span class="kw">object</span> HList {
+    <span class="kw">type</span> ::[H, T &lt;: HList] = HCons[H, T]
+    <span class="kw">val</span> :: = HCons
+}</code></pre></div>
+<p>The code snippet above is based on the <a href="https://apocalisp.wordpress.com/2010/07/06/type-level-programming-in-scala-part-6a-heterogeneous-list%C2%A0basics/">Apocalisp blog</a>.</p>
+<p>To use it, we can define values such as this:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">val</span> x = <span class="dv">12</span> :: <span class="st">&quot;asd&quot;</span> :: () :: <span class="kw">false</span> :: <span class="st">&quot;XX&quot;</span> :: <span class="dv">10</span> :: HNil</code></pre></div>
+<h1 id="mapping-over-an-hlist">Mapping over an HList</h1>
+<p>One of the “not exactly trivial” operations on an HList is to map over it. To do so, we have to match the input type with all types in the HList and apply the given function to the matching elements. Resulting type is a modified HList, with some elements replaced by the given function.</p>
+<p>A mapper can be defined as:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">sealed</span> <span class="kw">trait</span> Mapper[S, HL &lt;: HList, B] {
+    <span class="kw">type</span> Out &lt;: HList
+    <span class="kw">def</span> <span class="fu">apply</span>(hl: HL, f: S =&gt; B): Out
+}
+
+<span class="kw">def</span> map[S, B, T &lt;:HList](hc: T, f: S=&gt;B)(<span class="kw">implicit</span> ev: Mapper[S, T, B]) = <span class="fu">ev</span>(hc, f)</code></pre></div>
+<p>It takes an HList <code>hl: HL</code>, a function <code>f</code> from <code>S</code> to <code>B</code>, and generates an HList of statically generated type <code>Out</code>. To both generate the resulting type, and the actual logic implementing the mapping, there is an implicit variable <code>ev</code> used, that finds suitable Mapper instances for the given parameters.</p>
+<p>To create the required <code>Mapper</code> instances, a few implicit definitions are required:</p>
+<ul>
+<li>one to check if the current HList head matches the requested function input type <code>S</code>;</li>
+<li>another to iterate over HList if the current head does not match the type <code>S</code>;</li>
+<li>and the last one to finish the iteration when there is an element of <code>HNil</code> found.</li>
+</ul>
+<p>Also, as type equality can only be done by finding an implicit evidence, and there is no functionality in scala to support an explicit <code>else</code> case when there is no such evidence found, we’ll need to play with scala’s implicit precedence rules.</p>
+<p>Fortunately, such precedence rules exist, and one of them tells that methods in derived classes are more specific and will take precedence over the parent class methods. See <a href="http://www.scala-lang.org/docu/files/ScalaReference.pdf">Scala reference’s</a> <em>6.26.3</em> section.</p>
+<p>Given this knowledge, we can define the mapper instances as:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">object</span> Mapper <span class="kw">extends</span> LowPrioMapper {
+    <span class="kw">implicit</span> <span class="kw">def</span> typeMatchedMapper[S, H, T &lt;: HList, B](<span class="kw">implicit</span> ev: H =:= S, iTail: Mapper[S, T, B]): Mapper[S, H :: T, B] =
+        <span class="kw">new</span> Mapper[S, H :: T, B] {
+            <span class="kw">type</span> Out = B :: iTail.<span class="fu">Out</span>
+            <span class="kw">def</span> <span class="fu">apply</span>(hc: H :: T, f: S =&gt; B) = {
+                <span class="fu">println</span>(<span class="st">&quot;apply&quot;</span>)
+                <span class="fu">HCons</span>(<span class="fu">f</span>(<span class="fu">ev</span>(hc.<span class="fu">head</span>)) , <span class="fu">iTail</span>(hc.<span class="fu">tail</span>, f))
+            }
+        }
+}
+<span class="kw">trait</span> LowPrioMapper <span class="kw">extends</span> LowestPrioMapper {
+    <span class="kw">implicit</span> <span class="kw">def</span> iteratedMapper[S, H, T &lt;: HList, B](<span class="kw">implicit</span> iTail: Mapper[S, T, B]): Mapper[S, H :: T, B] =
+        <span class="kw">new</span> Mapper[S, H :: T, B] {
+            <span class="kw">type</span> Out = H :: iTail.<span class="fu">Out</span>
+            <span class="kw">def</span> <span class="fu">apply</span>(hc: H :: T, f: S =&gt; B) = {
+                <span class="fu">println</span>(<span class="st">&quot;recurse&quot;</span>)
+                <span class="fu">HCons</span>(hc.<span class="fu">head</span>, <span class="fu">iTail</span>(hc.<span class="fu">tail</span>, f))
+            }
+        }
+}
+<span class="kw">trait</span> LowestPrioMapper {
+    <span class="kw">implicit</span> <span class="kw">def</span> endOfIterationMapper[S,  HC &lt;: HNil, B]: Mapper[S, HC, B] =
+        <span class="kw">new</span> Mapper[S, HC, B] {
+            <span class="kw">type</span> Out = HNil
+            <span class="kw">def</span> <span class="fu">apply</span>(hc:  HC, f: S =&gt; B) = {
+                <span class="fu">println</span>(<span class="st">&quot;end.&quot;</span>)
+                HNil
+            }
+        }
+}</code></pre></div>
+<p>The implicit instance that will be checked first is <code>typeMatchedMapper</code> - which defines that the function <code>f</code> can process and replace the current head element. Next one - <code>iteratedMapper</code> - is simply passing the function <code>f</code> to the next tail processing Mapper without modifying the head. Finally, there is <code>endOfIterationMapper</code>, that only processes <code>HNil</code>, and returns it unchanged.</p>
+<h1 id="results">Results</h1>
+<p>Given the Mapper definitions above, we can test the map function by:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">import</span> HList.<span class="fu">_</span>
+
+<span class="kw">val</span> x = <span class="dv">12</span>:: <span class="st">&quot;asd&quot;</span> :: () :: <span class="kw">false</span>::<span class="st">&quot;XX&quot;</span> :: <span class="dv">10</span> :: HNil
+
+<span class="fu">println</span>(x)
+
+<span class="fu">println</span>(<span class="fu">map</span>(x, (a:String)=&gt;a+a))
+<span class="fu">println</span>(<span class="fu">map</span>(x, (a:Int)=&gt;a+a))
+<span class="fu">println</span>(<span class="fu">map</span>(x, (a:Boolean)=&gt;a.<span class="fu">toString</span>))
+<span class="fu">println</span>(<span class="fu">map</span>(x, (a:(Boolean, Int))=&gt;a.<span class="fu">toString</span>))</code></pre></div>
+<p>The element <code>x</code> is printed as:</p>
+<pre><code>HCons(12,HCons(asd,HCons((),HCons(false,HCons(XX,HCons(10,HNil$@a90bd3))))))</code></pre>
+<p>Mapping a function from <code>String</code> to <code>String</code>:</p>
+<pre><code>recurse
+apply
+recurse
+recurse
+apply
+recurse
+end.
+HCons(12,HCons(asdasd,HCons((),HCons(false,HCons(XXXX,HCons(10,HNil$@a90bd3))))))</code></pre>
+<p>And similarly with others. If there is no matching element in the HList, the list is returned unchanged.</p>
+<p><em><strong>Note:</strong> while writing our own HList is fun and provides a challenge for an excercise, for production code you should look for an existing library - e.g. <a href="https://github.com/milessabin/shapeless">Shapeless</a>.</em></p>
+
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+    /* * * CONFIGURATION VARIABLES * * */
+    var disqus_shortname = 'hyperlambda';
+
+    /* * * DON'T EDIT BELOW THIS LINE * * */
+    (function() {
+        var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+        dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+        (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript" rel="nofollow">comments powered by Disqus.</a></noscript>
+
+        </div>
+        <div id="footer">
+            I'm using <a href="http://jaspervdj.be/hakyll">Hakyll</a>!
+        </div>
+        <script>
+         (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+             (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+                                  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+         })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+         ga('create', 'UA-64681045-1', 'auto');
+         ga('send', 'pageview');
+
+        </script>
+    </body>
+</html>

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <title>Hyper Lambda - Eventflow: a functional approach to aggregates</title>
+        <link rel="stylesheet" type="text/css" href="../../css/main.css" />
+        <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Merriweather:300,300italic,700|Source+Code+Pro" />
+        <link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.hyperlambda.com/rss.xml" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body>
+        <div id="header">
+            <div id="logo">
+                <a href="../../">hyper λ</a>
+            </div>
+            <div id="navigation">
+                <a href="../../archive.html">Archive</a>
+            </div>
+        </div>
+
+        <div id="content">
+            <h1>Eventflow: a functional approach to aggregates</h1>
+
+            <div class="info">
+    Posted on August 25, 2015
+    
+        by Sarunas Valaskevicius
+    
+</div>
+
+<div id="toc"><ul>
+<li><a href="#modelling-an-aggregate">Modelling an aggregate</a></li>
+<li><a href="#so-what-can-we-do">So what can we do?</a></li>
+<li><a href="#how-does-it-look-like">How does it look like?</a></li>
+<li><a href="#how-does-it-work">How does it work?</a><ul>
+<li><a href="#defining-a-flow">Defining a flow</a></li>
+<li><a href="#consuming-a-defined-flow">Consuming a defined flow</a></li>
+</ul></li>
+<li><a href="#the-final-bits">The final bits</a></li>
+</ul></div>
+<h1 id="modelling-an-aggregate">Modelling an aggregate</h1>
+<p>An aggregate in a DDD system defines a consistency boundary for the entities it describes. Usually, this is implemented as a set of entities, where one of them is denoted as the aggregate root. To the outside world, this aggregate root is more or less a black box. No entity below the aggregate root can be referenced by other aggregates. This is required to ensure that the aggregate can maintain the children entities consistent at all times.</p>
+<p>Such approach to model aggregates is good, and it indeed works well for many applications. One downside of it, however, in an Event Sourced application, is that it splits the model into two logical components: the current state and aggregate events. When implementing an aggregate, developers need to think in both the terms of the concrete state and the flow of aggregate events. This also usually requires a considerable amount of code to support it. An aggregate is loaded from the past events, where all entities restore their data by providing event handlers. Then, when a new command is being processed, the command handler checks the state data and emits new events.</p>
+<h1 id="so-what-can-we-do">So what can we do?</h1>
+<p>The few goals of this experiment are:</p>
+<ul>
+<li>bring the state changes and the code that uses the state closer;</li>
+<li>reduce the explicit usage of state so that it allows developers to focus on the events more;</li>
+<li>minimise the amount of code required to describe an aggregate.</li>
+</ul>
+<p>As it happens, functional programming can help! It allows the expressivity to define command handlers that change according to the flow of aggregate events. When a new event is created, the affected command handlers are replaced by new ones. These new command handlers process the same commands, but they already know that the event has occurred and do not need to check the stored state.</p>
+<h1 id="how-does-it-look-like">How does it look like?</h1>
+<p>For the usage the example I’ll be writing a very simple aggregate - a counter that can be incremented or decremented, but can never go below zero.</p>
+<p>The aggregate is defined by a list of possible flows. Each flow sets possible commands handler, if it is available at that point, and an event handler. The first command handler that handles the command for the aggregate wins, and no other command handlers will be checked. However, when an event comes, all current event listeners will be notified.</p>
+<p>Having a list of flows is useful when we want do describe a complex aggregate, where the handlers can fork into separate flows. Once a flow reaches the end of its life - by not defining a <code>waitFor</code> event listener - it is removed from the list altogether.</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">val</span> aggregateLogic: List[Flow[Unit]] = List(
+  handler {<span class="kw">case</span> <span class="fu">Create</span>(id) =&gt; <span class="fu">emitEvent</span>(<span class="fu">Created</span>(id))} &gt;&gt; 
+    waitFor {<span class="kw">case</span> <span class="fu">Created</span>(_) =&gt; ()},
+  waitFor {<span class="kw">case</span> <span class="fu">Created</span>(_) =&gt; ()} &gt;&gt;
+    <span class="fu">countingLogic</span>(<span class="dv">0</span>)
+)</code></pre></div>
+<p>The above example defines two flows. The first of them sets a command handler to allow a counter being created. It also sets an event listener to wait for the <code>Created</code> event, as this makes the flow active until such event is emitted. Once the <code>Created</code> event is emitted, the event handler returns without continuation and the flow terminates.</p>
+<p>The second flow starts with no defined handler. First, it waits for the aggregate to be created. Once that happens, it passes the execution to the counter logic. The aggregateLogic is also the aggregate root, that is referenced by the outside world by the counter’s id.</p>
+<p>Note, while the purpose of the example above was to show the usage of several flows for an aggregate, it could also be refactored to one flow. The switch to the counter logic could have been set in the first flow, just after the aggregate creation event is received.</p>
+<p>The counter logic is slightly more complex. It shows how to transform an aggregate state to a local variable <code>c</code>. The function starts by defining a handler for the current state. The <code>Increment</code> command is allowed at all times, however, the <code>Decrement</code> command will only be successful if the current counter is above zero.</p>
+<p>Once the handler is defined, the flow waits for the counting events to happen and then recurses to the same flow definition with the adjusted state.</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">def</span> <span class="fu">countingLogic</span>(c: Int): Flow[Unit] =
+  handler {
+    <span class="kw">case</span> Increment =&gt; <span class="fu">emitEvent</span>(Incremented)
+    <span class="kw">case</span> Decrement =&gt; <span class="kw">if</span> (c &gt; <span class="dv">0</span>) <span class="fu">emitEvent</span>(Decremented)
+                      <span class="kw">else</span> <span class="fu">failCommand</span>(<span class="st">&quot;Counter cannot be decremented&quot;</span>)
+  } &gt;&gt;
+  waitFor {
+    <span class="kw">case</span> Incremented =&gt; c + <span class="dv">1</span>
+    <span class="kw">case</span> Decremented =&gt; c - <span class="dv">1</span>
+  } &gt;&gt;=
+  countingLogic</code></pre></div>
+<p>As the flow is defined by the <code>Flow</code> monad, we could as well have used the <em>for comprehension</em>, however due to Scala’s noise to signal ratio in them I’ve chosen the bind operators from the <a href="https://github.com/non/cats">cats</a> library instead.</p>
+<h1 id="how-does-it-work">How does it work?</h1>
+<h2 id="defining-a-flow">Defining a flow</h2>
+<p>The main element - the <code>Flow</code> monad is defined as a free monad using the excellent <em>cats</em> library. Each definition builds a lazy, recursive data structure from just a few operations - they set up the command and the event handlers.</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">type</span> CommandH = PartialFunction[Cmd, List[String] Xor List[Evt]]
+<span class="kw">type</span> EventH[A] = PartialFunction[Evt, A]
+
+<span class="kw">sealed</span> <span class="kw">trait</span> FlowF[+Next]
+<span class="kw">case</span> <span class="kw">class</span> SetCommandHandler[Next](cmdh: CommandH, next: Next) <span class="kw">extends</span> FlowF[Next]
+<span class="kw">case</span> <span class="kw">class</span> EventHandler[Next, A](evth: EventH[A], whenHandled: A =&gt; Next) <span class="kw">extends</span> FlowF[Next]</code></pre></div>
+<p>The algebraic data type (ADT) <code>FlowF</code> stands for the flow functor, with the relevant flow operations as its constructors. The functor instance is defined as following:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">implicit</span> <span class="kw">object</span> FlowFunctor <span class="kw">extends</span> Functor[FlowF] {
+    <span class="kw">def</span> map[A, B](fa: FlowF[A])(f: A =&gt; B): FlowF[B] = fa <span class="kw">match</span> {
+        <span class="kw">case</span> ch: SetCommandHandler[A] =&gt; SetCommandHandler[B](ch.<span class="fu">cmdh</span>, <span class="fu">f</span>(ch.<span class="fu">next</span>))
+        <span class="kw">case</span> eh: EventHandler[A, t] =&gt; EventHandler[B, t](eh.<span class="fu">evth</span>, eh.<span class="fu">whenHandled</span> andThen f)
+    }
+}</code></pre></div>
+<p>Because we have defined the flow to be a functor, we also get a monad for free:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">type</span> Flow[A] = Free[FlowF, A]</code></pre></div>
+<p>To illustrate what a monadic flow definition is translated to, lets use a few steps of defining a counter:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala">  handler {
+    <span class="kw">case</span> Increment =&gt; <span class="fu">emitEvent</span>(Incremented)
+    <span class="kw">case</span> Decrement =&gt; <span class="kw">if</span> (c &gt; <span class="dv">0</span>) <span class="fu">emitEvent</span>(Decremented)
+                      <span class="kw">else</span> <span class="fu">failCommand</span>(<span class="st">&quot;Counter cannot be decremented&quot;</span>)
+  } &gt;&gt;
+  waitFor {
+    <span class="kw">case</span> Incremented =&gt; c + <span class="dv">1</span>
+    <span class="kw">case</span> Decremented =&gt; c - <span class="dv">1</span>
+  } &gt;&gt;= ((cc: Int) =&gt;
+    handler {
+        <span class="kw">case</span> Increment =&gt; <span class="fu">emitEvent</span>(Incremented)
+        <span class="kw">case</span> Decrement =&gt; <span class="kw">if</span> (cc &gt; <span class="dv">0</span>) <span class="fu">emitEvent</span>(Decremented)
+                          <span class="kw">else</span> <span class="fu">failCommand</span>(<span class="st">&quot;Counter cannot be decremented&quot;</span>)
+    } &gt;&gt; ...
+  )</code></pre></div>
+<p>Which is transformed to a trampolined data structure logically equivalent to:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="fu">SetCommandHandler</span>({
+    <span class="kw">case</span> Increment =&gt; <span class="fu">emitEvent</span>(Incremented)
+    <span class="kw">case</span> Decrement =&gt; <span class="kw">if</span> (c &gt; <span class="dv">0</span>) <span class="fu">emitEvent</span>(Decremented)
+                      <span class="kw">else</span> <span class="fu">failCommand</span>(<span class="st">&quot;Counter cannot be decremented&quot;</span>)
+  },
+  EventHandler({
+      <span class="kw">case</span> Incremented =&gt; c + <span class="dv">1</span>
+      <span class="kw">case</span> Decremented =&gt; c - <span class="dv">1</span>
+    },
+    ((cc: Int) =&gt;
+      <span class="fu">SetCommandHandler</span>({
+        <span class="kw">case</span> Increment =&gt; <span class="fu">emitEvent</span>(Incremented)
+        <span class="kw">case</span> Decrement =&gt; <span class="kw">if</span> (cc &gt; <span class="dv">0</span>) <span class="fu">emitEvent</span>(Decremented)
+                          <span class="kw">else</span> <span class="fu">failCommand</span>(<span class="st">&quot;Counter cannot be decremented&quot;</span>)
+      },
+      ...
+      )
+    )
+  )
+)</code></pre></div>
+<p>The exact structure building (and using) process can be seen in the cats <a href="https://github.com/non/cats/blob/672e0105f2d0136c3185ff79300a002384a2ec8b/free/src/main/scala/cats/free/Free.scala">source for the free monads</a>.</p>
+<h2 id="consuming-a-defined-flow">Consuming a defined flow</h2>
+<p>Perhaps the most complex bit is the consumption of such structure when processing aggregate commands and events. To make this easier, the several aggregate definition steps are flattened to the following:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">case</span> <span class="kw">class</span> <span class="fu">EventStreamConsumer</span>(
+    cmdh: CommandH,
+    evh: Evt =&gt; Option[EventStreamConsumer]
+    )</code></pre></div>
+<p>The type above both gives a command handler at all times and also provides an event handler. When an event is handled successfully, the whole <code>EventStreamConsumer</code> is replaced by the returned continuation. When the event handler returns <code>None</code>, then the continuation is not possible and the flow is finished.</p>
+<p>The code snippet below shows the flattening structure translation. It uses the free monad’s fold for the step-wise deconstruction of a given flow:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">def</span> esRunnerCompiler[A](initCmdH: CommandH)(esRunner: Flow[A]): Option[EventStreamConsumer] =
+  esRunner.<span class="fu">fold</span>(
+    _ =&gt; None,
+    {
+      <span class="kw">case</span> <span class="fu">SetCommandHandler</span>(cmdh, next) =&gt; <span class="fu">esRunnerCompiler</span>(cmdh)(next)
+      <span class="kw">case</span> EventHandler(evth, cont) =&gt; {
+        <span class="kw">lazy</span> <span class="kw">val</span> self: EventStreamConsumer = <span class="fu">EventStreamConsumer</span>(
+          initCmdH,
+          (ev: Evt) =&gt; evth.<span class="fu">lift</span>(ev) <span class="fu">map</span> (cont andThen <span class="fu">esRunnerCompiler</span>(initCmdH)) getOrElse Some(self)
+        )
+        Some(self)
+      }
+    }
+  )</code></pre></div>
+<p>The compilation function is initially called with an empty command handler. All later <code>SetCommandHandler</code> actions override it until an <code>EventHandler</code> action is met. At this point, the compilation is suspended and a new <code>EventStreamConsumer</code> is constructed. The interpretation of the input actions will resume once the next event is processed.</p>
+<h1 id="the-final-bits">The final bits</h1>
+<p>While the counter example is very minimalistic, it can show how to couple the aggregate state and the logic that uses it coherently. This way there is less context switching required from developers to define an aggregate. The resulting code is concise and easy to reason about. Another benefit of such approach is that the code execution is separated from the aggregate event flow definition, and both can be extended independently.</p>
+<p>In future, I will try to describe more complex aggregates using the Event Flow. The main elements I will explore next are the flow forking and debugging a system defined in such way.</p>
+<p>But more importantly, what do you think of such approach? Does it help to solve the problems it aims to help with? Are the problems it is solving relevant for you?</p>
+
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+    /* * * CONFIGURATION VARIABLES * * */
+    var disqus_shortname = 'hyperlambda';
+
+    /* * * DON'T EDIT BELOW THIS LINE * * */
+    (function() {
+        var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+        dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+        (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript" rel="nofollow">comments powered by Disqus.</a></noscript>
+
+        </div>
+        <div id="footer">
+            I'm using <a href="http://jaspervdj.be/hakyll">Hakyll</a>!
+        </div>
+        <script>
+         (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+             (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+                                  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+         })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+         ga('create', 'UA-64681045-1', 'auto');
+         ga('send', 'pageview');
+
+        </script>
+    </body>
+</html>

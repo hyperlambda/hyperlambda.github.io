@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <title>Hyper Lambda - Eventflow: a more complex example</title>
+        <link rel="stylesheet" type="text/css" href="../../css/main.css" />
+        <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Merriweather:300,300italic,700|Source+Code+Pro" />
+        <link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.hyperlambda.com/rss.xml" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body>
+        <div id="header">
+            <div id="logo">
+                <a href="../../">hyper λ</a>
+            </div>
+            <div id="navigation">
+                <a href="../../archive.html">Archive</a>
+            </div>
+        </div>
+
+        <div id="content">
+            <h1>Eventflow: a more complex example</h1>
+
+            <div class="info">
+    Posted on October 16, 2015
+    
+        by Sarunas Valaskevicius
+    
+</div>
+
+<p><a href="../../posts/eventflow-cqrs-es-in-scala/">Last time</a> we’ve seen an example of a simple aggregate defined as an <em>Eventflow</em>. We’ve created a simple counter, that can be incremented and decremented, but it cannot be decremented below zero. All it needed was a local state for the counter value and an ability to fail a command.</p>
+<p>This time we’ll define just a little bit more complex aggregate logic - a door.</p>
+<ul>
+<li>A door can be registered in the system;</li>
+<li>it can be closed or opened;</li>
+<li>if its closed, it can be locked with a key;</li>
+<li>if its locked, it can be unlocked with the same key.</li>
+</ul>
+<p>Let’s define the ADT for the door events:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">sealed</span> <span class="kw">trait</span> Event
+<span class="kw">final</span> <span class="kw">case</span> <span class="kw">class</span> <span class="fu">Registered</span>(id: String) <span class="kw">extends</span> Event
+<span class="kw">case</span> <span class="kw">object</span> Opened <span class="kw">extends</span> Event
+<span class="kw">case</span> <span class="kw">object</span> Closed <span class="kw">extends</span> Event
+<span class="kw">final</span> <span class="kw">case</span> <span class="kw">class</span> <span class="fu">Locked</span>(key: String) <span class="kw">extends</span> Event
+<span class="kw">final</span> <span class="kw">case</span> <span class="kw">class</span> <span class="fu">Unlocked</span>(key: String) <span class="kw">extends</span> Event</code></pre></div>
+<p>And one for the commands:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">sealed</span> <span class="kw">trait</span> Command
+<span class="kw">final</span> <span class="kw">case</span> <span class="kw">class</span> <span class="fu">Register</span>(id: String) <span class="kw">extends</span> Command
+<span class="kw">case</span> <span class="kw">object</span> Open <span class="kw">extends</span> Command
+<span class="kw">case</span> <span class="kw">object</span> Close <span class="kw">extends</span> Command
+<span class="kw">final</span> <span class="kw">case</span> <span class="kw">class</span> Lock(key: String) <span class="kw">extends</span> Command
+<span class="kw">final</span> <span class="kw">case</span> <span class="kw">class</span> <span class="fu">Unlock</span>(key: String) <span class="kw">extends</span> Command</code></pre></div>
+<p>The main difference from the “counter” example is that here we have to switch to a different flow based on a previous event.</p>
+<p>The code for it is as follows:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">def</span> openDoorsLogic: Flow[Unit] =
+    handler {
+        <span class="kw">case</span> Close =&gt; <span class="fu">emitEvent</span>(Closed)
+        <span class="kw">case</span> _ =&gt; <span class="fu">failCommand</span>(<span class="st">&quot;Open door can only be closed.&quot;</span>)
+    } &gt;&gt;
+    waitForAndSwitch {
+        <span class="kw">case</span> Closed =&gt; closedDoorsLogic
+    }</code></pre></div>
+<p>The structure of the above code is very similar to that of the previous counter example - with the only addition: <code>waitForAndSwitch</code>. Let’s see how can we use it better:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">def</span> closedDoorsLogic: Flow[Unit] =
+    handler {
+        <span class="kw">case</span> Lock(key) =&gt; <span class="fu">emitEvent</span>(<span class="fu">Locked</span>(key))
+        <span class="kw">case</span> Open =&gt; <span class="fu">emitEvent</span>(Opened)
+        <span class="kw">case</span> _ =&gt; <span class="fu">failCommand</span>(<span class="st">&quot;Closed door can only be opened or locked.&quot;</span>)
+    } &gt;&gt;
+    waitForAndSwitch {
+        <span class="kw">case</span> Opened =&gt; openDoorsLogic
+        <span class="kw">case</span> <span class="fu">Locked</span>(key) =&gt; <span class="fu">lockedDoorsLogic</span>(key)
+    }</code></pre></div>
+<p>Each event matching case specifies its own flow continuation. Also, it can pass parameters - such as the key a door was locked with.</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">def</span> <span class="fu">lockedDoorsLogic</span>(key: String): Flow[Unit] =
+    handler {
+        <span class="kw">case</span> <span class="fu">Unlock</span>(attemptedKey) =&gt; <span class="kw">if</span> (key == attemptedKey) <span class="fu">emitEvent</span>(<span class="fu">Unlocked</span>(attemptedKey))
+                                     <span class="kw">else</span> <span class="fu">failCommand</span>(<span class="st">&quot;Attempted to unlock with an invalid key.&quot;</span>)
+        <span class="kw">case</span> _ =&gt; <span class="fu">failCommand</span>(<span class="st">&quot;A locked door can only be unlocked.&quot;</span>)
+    } &gt;&gt;
+    waitForAndSwitch {
+        <span class="kw">case</span> <span class="fu">Unlocked</span>(_) =&gt; closedDoorsLogic
+    }</code></pre></div>
+<p>With this, the door logic definition is complete. As it directly encodes the door’s state machine in text, I believe it is one of the clearest and most succinct forms to describe possible changes in a system. Of course, it can still be improved, and if you have any ideas how to do that, I’d love to hear them!</p>
+
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+    /* * * CONFIGURATION VARIABLES * * */
+    var disqus_shortname = 'hyperlambda';
+
+    /* * * DON'T EDIT BELOW THIS LINE * * */
+    (function() {
+        var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+        dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+        (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript" rel="nofollow">comments powered by Disqus.</a></noscript>
+
+        </div>
+        <div id="footer">
+            I'm using <a href="http://jaspervdj.be/hakyll">Hakyll</a>!
+        </div>
+        <script>
+         (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+             (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+                                  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+         })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+         ga('create', 'UA-64681045-1', 'auto');
+         ga('send', 'pageview');
+
+        </script>
+    </body>
+</html>

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <title>Hyper Lambda - Eventflow: just got even prettier!</title>
+        <link rel="stylesheet" type="text/css" href="../../css/main.css" />
+        <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Merriweather:300,300italic,700|Source+Code+Pro" />
+        <link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.hyperlambda.com/rss.xml" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body>
+        <div id="header">
+            <div id="logo">
+                <a href="../../">hyper λ</a>
+            </div>
+            <div id="navigation">
+                <a href="../../archive.html">Archive</a>
+            </div>
+        </div>
+
+        <div id="content">
+            <h1>Eventflow: just got even prettier!</h1>
+
+            <div class="info">
+    Posted on March  6, 2016
+    
+        by Sarunas Valaskevicius
+    
+</div>
+
+<p><a href="../../posts/eventflow-more-complex-example/">Last time</a> in the eventflow series we’ve seen how to define a bit more complex example. However, the example, while being functionally correct, has started to show that systems can still seem more complex than they should be. This time, we’ll see a new addition to the eventflow - a custom DSL, that makes defining an aggregate a breeze!</p>
+<p>The whole doors example described in the earlier post can be rewritten as:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">def</span> openDoors: Flow[Unit] = <span class="fu">handler</span>(
+  <span class="fu">when</span>(Close).<span class="fu">emit</span>(Closed).<span class="fu">switch</span>(closedDoors)
+)
+
+<span class="kw">def</span> closedDoors: Flow[Unit] = <span class="fu">handler</span>(
+  <span class="fu">when</span>(Open).<span class="fu">emit</span>(Opened),
+  when[Lock].<span class="fu">emit</span>[Locked].<span class="fu">switch</span>(ev =&gt; <span class="fu">lockedDoors</span>(ev.<span class="fu">key</span>))
+)
+
+<span class="kw">def</span> <span class="fu">lockedDoors</span>(key: String): Flow[Unit] = <span class="fu">handler</span>(
+  <span class="fu">when</span>(<span class="fu">Unlock</span>(key)).<span class="fu">emit</span>[Unlocked].<span class="fu">switch</span>(closedDoors),
+  when[Unlock].<span class="fu">failWithMessage</span>(<span class="st">&quot;Attempted unlock key is invalid&quot;</span>),
+  anyOther.<span class="fu">failWithMessage</span>(<span class="st">&quot;Locked door can only be unlocked.&quot;</span>)
+)
+
+<span class="kw">val</span> fullAggregate: Flow[Unit] = <span class="fu">handler</span>(
+  when[Register].<span class="fu">emit</span>[Registered].<span class="fu">switch</span>(openDoors)
+)</code></pre></div>
+<p>Which is in a much more succinct form and can be understood from just a glance. The command handler for unlocking the door checks for the same key in a form of a specific command matcher. If such matcher is not enough, a custom <code>guard</code> statement is available as well, as shown in the counter example:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="kw">def</span> <span class="fu">counting</span>(c: Int): Flow[Unit] = <span class="fu">handler</span>(
+  <span class="fu">when</span>(Increment).<span class="fu">emit</span>(Incremented).<span class="fu">switch</span>(<span class="fu">counting</span>(c + <span class="dv">1</span>)),
+  <span class="fu">when</span>(Decrement).<span class="fu">guard</span>(_ =&gt; c &gt; <span class="dv">0</span>, <span class="st">&quot;Counter cannot be decremented&quot;</span>).<span class="fu">emit</span>(Decremented).<span class="fu">switch</span>(<span class="fu">counting</span>(c - <span class="dv">1</span>))
+)</code></pre></div>
+<p>The language allows a few more different variations e.g. (and more):</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala"><span class="fu">when</span>(<span class="fu">Unlock</span>(key)).<span class="fu">emitEvent</span>(cmd =&gt; <span class="fu">Unlocked</span>(cmd.<span class="fu">key</span>)).<span class="fu">switch</span>(closedDoors), <span class="co">// alternative to `when(Unlock(key)).emit[Unlocked]`</span>
+<span class="fu">on</span>(<span class="fu">Unlocked</span>(key)).<span class="fu">switch</span>(closedDoors),                                     <span class="co">// alternative to `emit[Unlocked].switch(closedDoors)`</span>
+<span class="fu">on</span>(<span class="fu">Unlocked</span>(key)).<span class="fu">switch</span>(evt =&gt; closedDoors),                              <span class="co">// alternative to above</span>
+on[Unlocked].<span class="fu">switch</span>(evt =&gt; closedDoors),                                   <span class="co">// alternative to above</span>
+on[Unlocked].<span class="fu">switch</span>(closedDoors),                                          <span class="co">// alternative to above</span>
+when[Unlock].<span class="fu">failWithMessage</span>(<span class="st">&quot;Attempted unlock key is invalid&quot;</span>),           <span class="co">// match any Unlock command and fail with the given message</span></code></pre></div>
+<p>Similarly, you can set up tests focusing on the aggregate behaviour:</p>
+<div class="sourceCode"><pre class="sourceCode scala"><code class="sourceCode scala">it should <span class="st">&quot;allow locking door&quot;</span> in {
+  given {
+    newDbRunner.<span class="fu">withEvents</span>[Event](tag, <span class="st">&quot;door&quot;</span>, <span class="fu">Registered</span>(<span class="st">&quot;door&quot;</span>), Closed)
+  } when {
+    _.<span class="fu">command</span>(DoorAggregate, <span class="st">&quot;door&quot;</span>, Lock(<span class="st">&quot;key&quot;</span>))
+  } thenCheck {
+    _.<span class="fu">newEvents</span>[Event](tag, <span class="st">&quot;door&quot;</span>) should <span class="fu">be</span>(List(<span class="fu">Locked</span>(<span class="st">&quot;key&quot;</span>)))
+  }
+}</code></pre></div>
+<p>I hope you like it! The next step for eventflow is to make it useful and connect to a real datastore for the events.</p>
+<p>Have a play using the <a href="https://github.com/svalaskevicius/eventflow">github repo</a> and let me know your findings!</p>
+
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+    /* * * CONFIGURATION VARIABLES * * */
+    var disqus_shortname = 'hyperlambda';
+
+    /* * * DON'T EDIT BELOW THIS LINE * * */
+    (function() {
+        var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+        dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+        (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript" rel="nofollow">comments powered by Disqus.</a></noscript>
+
+        </div>
+        <div id="footer">
+            I'm using <a href="http://jaspervdj.be/hakyll">Hakyll</a>!
+        </div>
+        <script>
+         (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+             (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+                                  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+         })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+         ga('create', 'UA-64681045-1', 'auto');
+         ga('send', 'pageview');
+
+        </script>
+    </body>
+</html>
