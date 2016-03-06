@@ -38,7 +38,7 @@ def counting(c: Int): Flow[Unit] = handler(
 )
 ```
 
-Moreover, the language allows a few more different variations to define a system e.g.
+The language allows a few more different variations e.g. (and more):
 
 ```scala
 when(Unlock(key)).emitEvent(cmd => Unlocked(cmd.key)).switch(closedDoors), // alternative to `when(Unlock(key)).emit[Unlocked]`
