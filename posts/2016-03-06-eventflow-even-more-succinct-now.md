@@ -29,7 +29,7 @@ val fullAggregate: Flow[Unit] = handler(
 )
 ```
 
-Which is in a much more succinct form and can be understood from just a glance. The command handler for unlocking the door checks for the same key in a form of a specific command matcher. If such matcher is not enough, a custom `guard` statement is available as well, shown in the counter example:
+Which is in a much more succinct form and can be understood from just a glance. The command handler for unlocking the door checks for the same key in a form of a specific command matcher. If such matcher is not enough, a custom `guard` statement is available as well, as shown in the counter example:
 
 ```scala
 def counting(c: Int): Flow[Unit] = handler(
