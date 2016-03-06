@@ -1,6 +1,6 @@
 ---
 author: Sarunas Valaskevicius
-title: Eventflow: even more succinct now
+title: Eventflow: just got even prettier!
 toc: no
 ---
 
