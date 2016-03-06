@@ -4,7 +4,7 @@ title: Eventflow: even more succinct now
 toc: no
 ---
 
-[Last time](/posts/eventflow-more-complex-example/) in the eventflow series we've seen how to define a bit more complex example. However, the example, while being functionally correct, has started to show that systems, defined in the original eventflow logic, can still seem more complex than they should be. This time, we'll see a new addition to the eventflow - a custom DSL, that makes defining an aggregate a breeze!
+[Last time](/posts/eventflow-more-complex-example/) in the eventflow series we've seen how to define a bit more complex example. However, the example, while being functionally correct, has started to show that systems can still seem more complex than they should be. This time, we'll see a new addition to the eventflow - a custom DSL, that makes defining an aggregate a breeze!
 
 The whole doors example described in the earlier post can be rewritten as:
 
